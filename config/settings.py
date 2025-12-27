@@ -37,6 +37,10 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    # Core Admin Module (phải load trước các modules khác)
+    'platform.admin_core.apps.AdminCoreConfig',
+    # Platform Modules
+    'platform.tenants.apps.TenantsConfig',
 ]
 
 MIDDLEWARE = [
@@ -47,6 +51,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Admin Core Security Middleware (phải ở cuối)
+    'platform.admin_core.infrastructure.security_middleware.AdminSecurityMiddleware',
 ]
 
 ROOT_URLCONF = 'Saas_app.urls'

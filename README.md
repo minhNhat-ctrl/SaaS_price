@@ -132,15 +132,47 @@ analytics/
 ├── services/
 ├── repositories/
 ├── infrastructure/
+    └── django_admin.py  # (khuyến nghị) đăng ký Django Admin
 └── apps.py
 ```
 
 **Bước 3:** Nguyên tắc tích hợp
+- Module bắt buộc khai báo trong INSTALLED_APPS
+- Module tự đăng ký admin (nếu cần quản trị)
+- Core admin không chỉnh sửa khi thêm module mới
 - Service luôn nhận tenant
 - Không truy cập DB trực tiếp
 - Không phụ thuộc module khác (trừ qua service)
 
 ---
+## 8.1 Nguyên tắc mới: Module tự đăng ký Admin
+
+    Để hệ thống quản trị (admin) hoạt động như một core test & back-office, mỗi module cần tuân theo các nguyên tắc sau:
+
+**Nguyên tắc:**
+1. Module tự expose khả năng quản trị
+    - Thông qua file infrastructure/django_admin.py
+    - Sử dụng Django Admin mặc định
+2. Core admin KHÔNG import module cụ thể
+    - Core admin chỉ cung cấp base class / policy chung
+    - Không phụ thuộc business module
+    - Admin KHÔNG gọi ORM trực tiếp cho nghiệp vụ
+3. Admin đóng vai trò adapter
+    - Gọi vào Service layer của module
+    - Luồng chuẩn
+        Django Admin UI
+        ↓
+        Module admin adapter
+        ↓
+        Service layer
+        ↓
+        Repository
+        ↓
+        Database
+**Lợi ích**
+- Tạo module mới → admin dùng được ngay
+- Không phá kiến trúc khi scale
+- Admin trở thành công cụ test kiến trúc sống
 
 ## 9. Nguyên tắc mở rộng lâu dài
 

@@ -15,8 +15,26 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include
+from platform.admin_core.services import AdminHashService
+
+# Initialize admin hash service
+admin_hash_service = AdminHashService()
+admin_url_hash = admin_hash_service.generate_hash()
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    # Standard admin (disabled - use hash-protected instead)
+    # path('admin/', admin.site.urls),
+    
+    # Admin Core - protected by hash URL
+    # Example URL: /admin/{hash}/
+    path(f'admin/{admin_url_hash}/', admin.site.urls, name='admin_hash'),
+    
+    # Include other app URLs
+    path('api/', include('platform.tenants.urls')),
 ]
+
+# Print admin URL for reference (remove in production)
+print(f"\n{'='*60}")
+print(f"[ADMIN URL] http://localhost:8000/admin/{admin_url_hash}/")
+print(f"{'='*60}\n")
