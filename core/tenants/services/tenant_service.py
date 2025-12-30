@@ -7,9 +7,15 @@ Nguyên tắc:
 - Chỉ gọi repository để truy cập data
 - Chỉ nhận input thuần (không phải HttpRequest)
 - Return domain objects hoặc DTO (không phải Django Response)
+
+Multi-tenancy:
+- Mỗi create_tenant → auto-create schema
+- Mỗi delete_tenant → auto-drop schema
+- Repository handle schema switching
 """
 from typing import Optional, List
 from uuid import UUID
+import logging
 
 from core.tenants.domain import (
     Tenant,
@@ -21,6 +27,8 @@ from core.tenants.domain import (
 )
 from core.tenants.repositories import TenantRepository
 
+logger = logging.getLogger(__name__)
+
 
 class TenantService:
     """
@@ -30,6 +38,7 @@ class TenantService:
     - Domain entity logic
     - Repository data access
     - Business rule validation
+    - Schema management (indirectly through Django-Tenants)
     """
 
     def __init__(self, repository: TenantRepository):
@@ -50,6 +59,12 @@ class TenantService:
     ) -> Tenant:
         """
         Use-case: Tạo tenant mới
+        
+        Quy trình:
+        1. Check slug đã tồn tại
+        2. Tạo domain entity
+        3. Tạo tenant entity (auto-generate schema_name)
+        4. Lưu vào database (django-tenants auto-create schema)
         
         Args:
             name: Tên khách hàng / công ty
@@ -73,16 +88,24 @@ class TenantService:
         # Tạo domain value object
         domain_obj = TenantDomainValue(domain=domain, is_primary=is_primary)
 
-        # Tạo tenant entity (domain layer sẽ validate)
+        # Tạo tenant entity (domain layer sẽ validate + auto-generate schema_name)
+        # Schema name format: tenant_{slug_with_underscores}
+        schema_name = f"tenant_{slug.lower().replace('-', '_')}"
+        
         tenant = Tenant.create(
             name=name,
             slug=slug,
+            schema_name=schema_name,
             domains=[domain_obj],
             status=TenantStatus.ACTIVE,
         )
 
-        # Lưu vào database
-        return await self.repository.create(tenant)
+        # Lưu vào database (django-tenants tự động create schema)
+        saved_tenant = await self.repository.create(tenant)
+        
+        logger.info(f"Tenant created: {name} (slug={slug}, schema={schema_name})")
+        
+        return saved_tenant
 
     async def get_tenant_by_id(self, tenant_id: UUID) -> Tenant:
         """
@@ -125,6 +148,11 @@ class TenantService:
         Use-case: Lấy tenant theo domain
         
         Phục vụ middleware: resolve tenant từ request.META['HTTP_HOST']
+        
+        Workflow:
+        1. Query Domain table
+        2. Get Tenant từ Domain.tenant
+        3. Return domain entity
         
         Args:
             domain: Domain từ HTTP request
@@ -192,6 +220,9 @@ class TenantService:
         """
         tenant = await self.get_tenant_by_id(tenant_id)
         tenant.activate()
+        
+        logger.info(f"Tenant activated: {tenant.slug}")
+        
         return await self.repository.update(tenant)
 
     async def suspend_tenant(self, tenant_id: UUID) -> Tenant:
@@ -209,11 +240,19 @@ class TenantService:
         """
         tenant = await self.get_tenant_by_id(tenant_id)
         tenant.suspend()
+        
+        logger.info(f"Tenant suspended: {tenant.slug}")
+        
         return await self.repository.update(tenant)
 
     async def delete_tenant(self, tenant_id: UUID) -> bool:
         """
         Use-case: Xóa tenant (soft delete)
+        
+        Notes:
+        - Soft delete (status = deleted)
+        - Schema vẫn tồn tại (bảo toàn data)
+        - Dùng django-tenants command để drop schema nếu cần
         
         Args:
             tenant_id: UUID của tenant
@@ -227,6 +266,10 @@ class TenantService:
         tenant = await self.get_tenant_by_id(tenant_id)
         tenant.delete()
         await self.repository.update(tenant)
+        
+        logger.warning(f"Tenant deleted (soft): {tenant.slug} (schema={tenant.schema_name})")
+        logger.warning(f"To drop schema manually: psql -c 'DROP SCHEMA {tenant.schema_name} CASCADE;'")
+        
         return True
 
     async def add_domain_to_tenant(
@@ -254,6 +297,8 @@ class TenantService:
         
         domain_obj = TenantDomainValue(domain=domain, is_primary=is_primary)
         tenant.add_domain(domain_obj)
+        
+        logger.info(f"Domain added to tenant {tenant.slug}: {domain}")
         
         return await self.repository.update(tenant)
 

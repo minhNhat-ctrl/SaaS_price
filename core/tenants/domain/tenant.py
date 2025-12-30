@@ -59,11 +59,17 @@ class Tenant:
     - Không import Django
     - Không biết về DB, ORM, HTTP
     - Chỉ chứa business logic
+    
+    Multi-tenancy:
+    - Mỗi tenant có schema riêng (PostgreSQL schema)
+    - schema_name dùng để identify schema trong database
+    - Format: tenant_{slug}
     """
     id: UUID
     name: str
     slug: str
     status: TenantStatus
+    schema_name: str  # PostgreSQL schema name (e.g., 'tenant_acme')
     domains: List[TenantDomainValue] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
@@ -96,6 +102,7 @@ class Tenant:
         cls,
         name: str,
         slug: str,
+        schema_name: str,
         domains: List[TenantDomainValue],
         status: TenantStatus = TenantStatus.ACTIVE,
     ) -> "Tenant":
@@ -105,6 +112,7 @@ class Tenant:
         Args:
             name: Tên khách hàng / công ty
             slug: Định danh duy nhất (lowercase, alphanumeric + hyphens)
+            schema_name: PostgreSQL schema name (e.g., 'tenant_acme')
             domains: Danh sách domain
             status: Trạng thái (mặc định ACTIVE)
         
@@ -119,6 +127,7 @@ class Tenant:
             id=uuid4(),
             name=name.strip(),
             slug=slug.strip().lower(),
+            schema_name=schema_name.strip().lower(),
             status=status,
             domains=domains,
         )

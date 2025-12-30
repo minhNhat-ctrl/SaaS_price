@@ -3,7 +3,7 @@
 
 ## 1. Mục tiêu kiến trúc
 
-- Thiết kế cho SaaS quy mô nhỏ → trung bình
+- Thiết kế cho SaaS quy mô trung bình
 - Backend-first (không phụ thuộc UI)
 - Dễ mở rộng module (plug-in style)
 - Tách rõ nghiệp vụ – hạ tầng – framework
@@ -37,7 +37,7 @@ saas_project/
 │   │   ├── dev.py
 │   │   └── prod.py
 │   └── urls.py
-├── platform/          # Core SaaS platform (xương sống)
+├── core/          # Core SaaS platform (xương sống)
 │   ├── tenants/
 │   ├── subscriptions/
 │   ├── usage/

@@ -1,12 +1,24 @@
 from django.db import models
+from django_tenants.models import TenantMixin, DomainMixin
 import uuid
 
 
-class Tenant(models.Model):
+class Tenant(TenantMixin):
     """
-    SaaS Tenant
-    - Đại diện cho 1 khách hàng / 1 công ty
-    - Do hệ thống quản trị tạo
+    SaaS Tenant - Multi-tenancy with Shared Database + Separate Schemas
+    
+    Kế thừa từ TenantMixin của django-tenants:
+    - Tự động quản lý schema (create/drop)
+    - Auto migration per tenant
+    - Domain routing
+    
+    Attributes:
+    - id: UUID primary key
+    - name: Tên khách hàng / công ty
+    - slug: Định danh duy nhất (URL-safe)
+    - schema_name: PostgreSQL schema name (auto-generated từ slug)
+    - status: active/suspended/deleted
+    - created_at, updated_at: Timestamps
     """
 
     id = models.UUIDField(
@@ -24,6 +36,13 @@ class Tenant(models.Model):
         max_length=100,
         unique=True,
         help_text="Định danh tenant (dùng cho subdomain / internal ref)"
+    )
+
+    schema_name = models.CharField(
+        max_length=63,
+        unique=True,
+        default="",
+        help_text="PostgreSQL schema name (auto-generated từ slug)"
     )
 
     status = models.CharField(
@@ -44,6 +63,11 @@ class Tenant(models.Model):
         auto_now=True
     )
 
+    # Required by TenantMixin (inherited)
+    # - schema_name: Automatically set dựa trên slug
+    # - auto_create_schema: Create schema tự động
+    auto_create_schema = True
+
     class Meta:
         db_table = "tenants"
         indexes = [
@@ -53,11 +77,34 @@ class Tenant(models.Model):
 
     def __str__(self):
         return self.name
-    
-    
-class TenantDomain(models.Model):
+
+    def save(self, *args, **kwargs):
+        """
+        Override save để auto-generate schema_name từ slug
+        
+        Schema naming convention: tenant_{slug}
+        (django-tenants yêu cầu schema_name không có hyphens)
+        """
+        if not self.schema_name:
+            # Thay hyphens bằng underscores (PostgreSQL schema requirement)
+            self.schema_name = f"tenant_{self.slug.replace('-', '_')}"
+        
+        super().save(*args, **kwargs)
+
+
+class TenantDomain(DomainMixin):
     """
-    Mapping domain / subdomain → tenant
+    Domain / Subdomain mapping → Tenant
+    
+    Kế thừa từ DomainMixin của django-tenants:
+    - Automatic domain routing
+    - Support multiple domains per tenant
+    
+    Workflow:
+    1. Request tới example.com hoặc tenant.example.com
+    2. Django-tenants middleware resolve domain → tenant
+    3. Set schema_name ở connection context
+    4. ORM queries tự động sử dụng tenant schema
     """
 
     tenant = models.ForeignKey(
@@ -73,7 +120,8 @@ class TenantDomain(models.Model):
     )
 
     is_primary = models.BooleanField(
-        default=True
+        default=True,
+        help_text="Primary domain cho tenant (subdomain routing)"
     )
 
     class Meta:

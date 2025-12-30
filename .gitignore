@@ -1,0 +1,110 @@
+# ======================================================
+# Python / Django
+# ======================================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+venv/
+.env/
+.env.*
+.venv/
+
+# Django stuff
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Media & static (generated)
+media/
+staticfiles/
+
+# Django migrations (OPTIONAL)
+# Nếu bạn muốn commit migrations → comment 2 dòng dưới
+**/migrations/*
+!**/migrations/__init__.py
+
+# ======================================================
+# Environment / Secrets
+# ======================================================
+.env
+.env.local
+.env.dev
+.env.prod
+.env.test
+
+# Secrets / credentials
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+
+# ======================================================
+# IDE / Editor
+# ======================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# ======================================================
+# OS files
+# ======================================================
+.DS_Store
+.DS_Store?
+Thumbs.db
+
+# ======================================================
+# Build / Distribution
+# ======================================================
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ======================================================
+# Test / Coverage
+# ======================================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ======================================================
+# Node (nếu sau này có frontend / admin UI)
+# ======================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ======================================================
+# Docker (nếu dùng local)
+# ======================================================
+docker-compose.override.yml
+.env.docker
+
+# ======================================================
+# Temporary / runtime
+# ======================================================
+tmp/
+temp/
+*.tmp
+
+# ======================================================
+# Custom SaaS artifacts
+# ======================================================
+# Crawl data / imports / exports
+data/
+imports/
+exports/
+
+# Cache layers
+.cache/

@@ -1,8 +1,13 @@
 """
 Django ORM Implementation of TenantRepository
 
-Concrete implementation sử dụng Django ORM
+Concrete implementation sử dụng Django ORM + django-tenants
 Che giấu chi tiết Django implementation khỏi service layer
+
+Multi-tenancy:
+- Queries tự động filter theo schema (django-tenants handles)
+- Tenant model kế thừa từ TenantMixin
+- Domain model kế thừa từ DomainMixin
 """
 from typing import Optional, List
 from uuid import UUID
@@ -15,7 +20,7 @@ from core.tenants.domain import (
     TenantAlreadyExistsError,
 )
 from core.tenants.repositories import TenantRepository
-from .django_models import Tenant as TenantModel, TenantDomain as TenantDomainModel
+from .django_models import Tenant as TenantModel, TenantDomain as DomainModel
 
 
 class DjangoTenantRepository(TenantRepository):
@@ -26,6 +31,7 @@ class DjangoTenantRepository(TenantRepository):
     - Convert Django ORM models ↔ Domain entities
     - Implement CRUD operations
     - Handle database transactions
+    - Work with django-tenants schema context
     """
 
     def _dto_to_domain(self, db_tenant: TenantModel) -> Tenant:
@@ -33,24 +39,25 @@ class DjangoTenantRepository(TenantRepository):
         Convert Django ORM model → Domain entity
         
         Args:
-            db_tenant: Django TenantModel
+            db_tenant: Django TenantModel (từ django-tenants)
         
         Returns:
             Domain Tenant entity
         """
-        # Load domains
+        # Load domains từ Domain model
         domains = [
             TenantDomainValue(
-                domain=td.domain,
-                is_primary=td.is_primary,
+                domain=d.domain,
+                is_primary=d.is_primary,
             )
-            for td in db_tenant.domains.all()
+            for d in DomainModel.objects.filter(tenant=db_tenant)
         ]
 
         return Tenant(
             id=db_tenant.id,
             name=db_tenant.name,
             slug=db_tenant.slug,
+            schema_name=db_tenant.schema_name,
             status=TenantStatus(db_tenant.status),
             domains=domains,
             created_at=db_tenant.created_at,
@@ -71,6 +78,7 @@ class DjangoTenantRepository(TenantRepository):
             id=tenant.id,
             name=tenant.name,
             slug=tenant.slug,
+            schema_name=tenant.schema_name,
             status=tenant.status.value,
         )
         return db_tenant
@@ -78,6 +86,12 @@ class DjangoTenantRepository(TenantRepository):
     async def create(self, tenant: Tenant) -> Tenant:
         """
         Lưu tenant mới vào database
+        
+        Quy trình:
+        1. Check slug đã tồn tại
+        2. Create Tenant (tự động create schema)
+        3. Create Domain mapping
+        4. Return domain entity
         
         Args:
             tenant: Domain Tenant entity
@@ -87,6 +101,10 @@ class DjangoTenantRepository(TenantRepository):
         
         Raises:
             TenantAlreadyExistsError: Nếu slug đã tồn tại
+        
+        Notes:
+        - Django-tenants tự động create schema khi save
+        - auto_create_schema=True ở TenantModel
         """
         # Check slug đã tồn tại chưa
         if await TenantModel.objects.filter(slug=tenant.slug).aexists():
@@ -95,12 +113,12 @@ class DjangoTenantRepository(TenantRepository):
         # Convert domain → Django model
         db_tenant = self._domain_to_dto(tenant)
         
-        # Lưu tenant
+        # Lưu tenant (django-tenants tự động create schema)
         await db_tenant.asave()
 
         # Lưu domains
         for domain in tenant.domains:
-            await TenantDomainModel.objects.acreate(
+            await DomainModel.objects.acreate(
                 tenant=db_tenant,
                 domain=domain.domain,
                 is_primary=domain.is_primary,
@@ -120,7 +138,8 @@ class DjangoTenantRepository(TenantRepository):
             Domain Tenant entity hoặc None
         """
         try:
-            db_tenant = await TenantModel.objects.prefetch_related('domains').aget(id=tenant_id)
+            # Query public schema (tenants table nằm ở public)
+            db_tenant = await TenantModel.objects.aget(id=tenant_id)
             return self._dto_to_domain(db_tenant)
         except TenantModel.DoesNotExist:
             return None
@@ -136,7 +155,7 @@ class DjangoTenantRepository(TenantRepository):
             Domain Tenant entity hoặc None
         """
         try:
-            db_tenant = await TenantModel.objects.prefetch_related('domains').aget(slug=slug)
+            db_tenant = await TenantModel.objects.aget(slug=slug)
             return self._dto_to_domain(db_tenant)
         except TenantModel.DoesNotExist:
             return None
@@ -145,6 +164,10 @@ class DjangoTenantRepository(TenantRepository):
         """
         Lấy tenant theo domain
         
+        Workflow:
+        1. Tìm Domain matching domain string
+        2. Get Tenant từ Domain.tenant
+        
         Args:
             domain: Domain của tenant
         
@@ -152,9 +175,11 @@ class DjangoTenantRepository(TenantRepository):
             Domain Tenant entity hoặc None
         """
         try:
-            tenant_domain = await TenantDomainModel.objects.select_related('tenant').aget(domain=domain)
-            return await self.get_by_id(tenant_domain.tenant_id)
-        except TenantDomainModel.DoesNotExist:
+            domain_obj = await DomainModel.objects.select_related('tenant').aget(
+                domain=domain
+            )
+            return await self.get_by_id(domain_obj.tenant_id)
+        except DomainModel.DoesNotExist:
             return None
 
     async def list_all(self, status: Optional[TenantStatus] = None) -> List[Tenant]:
@@ -167,7 +192,7 @@ class DjangoTenantRepository(TenantRepository):
         Returns:
             Danh sách Domain Tenant entities
         """
-        query = TenantModel.objects.prefetch_related('domains')
+        query = TenantModel.objects.all()
         
         if status:
             query = query.filter(status=status.value)
@@ -196,11 +221,11 @@ class DjangoTenantRepository(TenantRepository):
 
         # Update domains
         # Xóa domains cũ
-        await TenantDomainModel.objects.filter(tenant=db_tenant).adelete()
+        await DomainModel.objects.filter(tenant=db_tenant).adelete()
         
         # Tạo domains mới
         for domain in tenant.domains:
-            await TenantDomainModel.objects.acreate(
+            await DomainModel.objects.acreate(
                 tenant=db_tenant,
                 domain=domain.domain,
                 is_primary=domain.is_primary,
@@ -210,7 +235,10 @@ class DjangoTenantRepository(TenantRepository):
 
     async def delete(self, tenant_id: UUID) -> bool:
         """
-        Xóa tenant (hard delete hoặc soft delete tùy thiết kế)
+        Xóa tenant (soft delete)
+        
+        Notes:
+        - Django-tenants tự động drop schema khi delete
         
         Args:
             tenant_id: UUID của tenant
@@ -220,7 +248,9 @@ class DjangoTenantRepository(TenantRepository):
         """
         try:
             db_tenant = await TenantModel.objects.aget(id=tenant_id)
-            await db_tenant.adelete()
+            # Soft delete (set status = deleted)
+            db_tenant.status = TenantStatus.DELETED.value
+            await db_tenant.asave()
             return True
         except TenantModel.DoesNotExist:
             return False

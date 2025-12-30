@@ -104,7 +104,7 @@ Module admin_core là trung tâm quản lý hệ thống, cung cấp:
 #   ```
 
 # Bước 3: Thêm vào INSTALLED_APPS (config/settings.py)
-#   'platform.subscriptions.apps.SubscriptionsConfig',
+#   'core.subscriptions.apps.SubscriptionsConfig',
 
 # Bước 4: Admin interface sẽ tự động có models từ module này
 #   Không cần edit admin core!
@@ -189,7 +189,7 @@ Module admin_core là trung tâm quản lý hệ thống, cung cấp:
 # - Check models được import đúng
 # - Check INSTALLED_APPS có module apps.py
 # - Run: python manage.py shell
-#   >>> from platform.admin_core.services import AdminModuleLoader
+#   >>> from core.admin_core.services import AdminModuleLoader
 #   >>> loader = AdminModuleLoader()
 #   >>> failed = await loader.discover_and_load_modules()
 
@@ -215,7 +215,7 @@ Module admin_core là trung tâm quản lý hệ thống, cung cấp:
 # ============================================================================
 
 # Get admin URL:
-# from platform.admin_core.services import AdminHashService
+# from core.admin_core.services import AdminHashService
 # service = AdminHashService()
 # url = service.get_admin_url(base_url='https://example.com')
 # # Output: https://example.com/admin/{hash}/
@@ -224,7 +224,7 @@ Module admin_core là trung tâm quản lý hệ thống, cung cấp:
 # is_valid = service.validate_hash(user_hash, client_ip='192.168.1.1')
 
 # List loaded modules:
-# from platform.admin_core.services import AdminModuleLoader
+# from core.admin_core.services import AdminModuleLoader
 # loader = AdminModuleLoader()
 # modules = await loader.discover_and_load_modules()
 # for mod in modules:

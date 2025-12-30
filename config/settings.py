@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -25,22 +26,29 @@ SECRET_KEY = 'django-insecure-w3dfdg7qyqvp=vx(9x=ojw50fhxdpzn16!aow3!rp=*qe^pajh
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['dj.2kvietnam.com']
 
 
 # Application definition
 
 INSTALLED_APPS = [
+    'django.contrib.sites',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    # Authentication provider (allauth)
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
     # Core Admin Module (phải load trước các modules khác)
-    'platform.admin_core.apps.AdminCoreConfig',
+    'core.admin_core.apps.AdminCoreConfig',
     # Platform Modules
-    'platform.tenants.apps.TenantsConfig',
+    'core.tenants.apps.TenantsConfig',
+    # Identity Module
+    'core.identity.apps.IdentityConfig',
 ]
 
 MIDDLEWARE = [
@@ -49,13 +57,23 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'allauth.account.middleware.AccountMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # Admin Core Security Middleware (phải ở cuối)
-    'platform.admin_core.infrastructure.security_middleware.AdminSecurityMiddleware',
+    'core.admin_core.infrastructure.security_middleware.AdminSecurityMiddleware',
 ]
 
-ROOT_URLCONF = 'Saas_app.urls'
+# Authentication backends
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    'allauth.account.auth_backends.AuthenticationBackend',
+]
+
+# Required by django-allauth
+SITE_ID = 1
+
+ROOT_URLCONF = 'config.urls'
 
 TEMPLATES = [
     {
@@ -73,18 +91,36 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'Saas_app.wsgi.application'
+WSGI_APPLICATION = 'config.wsgi.application'
 
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# Database configuration (PostgreSQL by default; allows sqlite via env override)
+DB_ENGINE = os.getenv('DATABASE_ENGINE', 'django_tenants.postgresql_backend')
+if DB_ENGINE == 'django.db.backends.sqlite3':
+    DATABASES = {
+        'default': {
+            'ENGINE': DB_ENGINE,
+            'NAME': BASE_DIR / os.getenv('DATABASE_NAME', 'db.sqlite3'),
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': DB_ENGINE,
+            'NAME': os.getenv('DATABASE_NAME', 'saas_app'),
+            'USER': os.getenv('DATABASE_USER', 'saas_app'),
+            'PASSWORD': os.getenv('DATABASE_PASSWORD', 'saas_app_dev'),
+            'HOST': os.getenv('DATABASE_HOST', ''),  # Empty uses UNIX socket
+            'PORT': os.getenv('DATABASE_PORT', '5432'),
+        }
+    }
+
+# Django-tenants configuration
+TENANT_MODEL = 'core.tenants.infrastructure.django_models.Tenant'
+TENANT_DOMAIN_MODEL = 'core.tenants.infrastructure.django_models.TenantDomain'
 
 
 # Password validation
@@ -121,9 +157,24 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Media files
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ============================================================
+# Admin Core Settings
+# ============================================================
+
+# Disable hash validation in development (set True in production)
+ADMIN_ENABLE_HASH = False
+
+# Admin hash service will be initialized in apps.py
+# ADMIN_HASH_SERVICE will be set there

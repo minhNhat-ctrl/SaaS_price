@@ -1,40 +1,31 @@
-"""
-Django App Configuration cho Tenants module
-"""
+"""Django App Configuration for the Tenants module."""
 from django.apps import AppConfig
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class TenantsConfig(AppConfig):
-    """
-    Configuration class cho tenants app
-    
-    Ghi chú:
-    - default_auto_field = 'django.db.models.BigAutoField'
-    - Không khuyến khích dùng Django signals (thay vào đó dùng domain events)
-    """
+    """Django app configuration for multi-tenant support."""
+
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'core.tenants'
-    verbose_name = 'Tenants'
+    verbose_name = 'Tenants (Multi-tenant)'
 
     def ready(self):
-        """
-        Called when Django starts
-        
-        Auto-load admin registration:
-        - Không cần import explicit trong main config
-        - Module sẽ tự động đăng ký ModelAdmin khi app ready
-        
-        Có thể dùng để:
-        - Đăng ký signals
-        - Initialize caching
-        - Setup event handlers
-        """
-        # Auto-load Django admin registration
-        # This will auto-register TenantAdmin, TenantDomainAdmin
-        # without needing explicit imports in main admin config
+        """Log tenant initialization and auto-load admin registration."""
+
+        logger.info("=" * 60)
+        logger.info("Tenants App Ready - Schema-per-Tenant Enabled")
+        logger.info("=" * 60)
+        logger.info("Multi-tenancy Model: Shared Database + Separate Schemas")
+        logger.info("Migration Strategy: Per-tenant auto-migration")
+        logger.info("Configuration: TenantMixin/DomainMixin with tenant_<slug> schemas")
+        logger.info("Usage: migrate per tenant via manage.py migrate --tenant=<slug>")
+        logger.info("=" * 60)
+
+        # Auto-load Django admin registration without explicit imports elsewhere
         from .infrastructure import django_admin  # noqa: F401
-        
-        # TODO: Import signal handlers nếu cần
-        # from .infrastructure import signals
-        pass
-        
+
+        # TODO: Import signal handlers if needed (e.g., schema lifecycle)
+    name = 'core.tenants'
