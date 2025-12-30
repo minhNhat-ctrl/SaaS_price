@@ -51,6 +51,8 @@ INSTALLED_APPS = [
     'core.identity.apps.IdentityConfig',
     # Access Module (Authorization & RBAC)
     'core.access.apps.AccessConfig',
+    # Accounts Module (User Profiles & Preferences)
+    'core.accounts.apps.AccountsConfig',
 ]
 
 MIDDLEWARE = [
