@@ -49,6 +49,8 @@ INSTALLED_APPS = [
     'core.tenants.apps.TenantsConfig',
     # Identity Module
     'core.identity.apps.IdentityConfig',
+    # Access Module (Authorization & RBAC)
+    'core.access.apps.AccessConfig',
 ]
 
 MIDDLEWARE = [
@@ -111,9 +113,9 @@ else:
         'default': {
             'ENGINE': DB_ENGINE,
             'NAME': os.getenv('DATABASE_NAME', 'saas_app'),
-            'USER': os.getenv('DATABASE_USER', 'saas_app'),
-            'PASSWORD': os.getenv('DATABASE_PASSWORD', 'saas_app_dev'),
-            'HOST': os.getenv('DATABASE_HOST', ''),  # Empty uses UNIX socket
+            'USER': os.getenv('DATABASE_USER', 'saas_app_dev'),
+            'PASSWORD': os.getenv('DATABASE_PASSWORD', 'Abcd-da3nd-2Nnd-23nd'),
+            'HOST': os.getenv('DATABASE_HOST', '/tmp'),  # Use /tmp socket
             'PORT': os.getenv('DATABASE_PORT', '5432'),
         }
     }
