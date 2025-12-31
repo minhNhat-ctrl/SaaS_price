@@ -31,6 +31,13 @@ urlpatterns = [
     # URL: /admin/{ADMIN_HASH}/
     path(f'admin/{ADMIN_HASH}/', admin.site.urls, name='admin_hash'),
     
+    # API endpoints for React SPA
+    # Identity module - authentication
+    path('api/identity/', include('core.identity.infrastructure.urls')),
+    
+    # Accounts module - profile management
+    path('api/accounts/', include('core.accounts.urls')),
+    
     # Include other app URLs
     # path('api/', include('core.tenants.urls')),  # TODO: Install djangorestframework first
 ]
