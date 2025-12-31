@@ -53,6 +53,8 @@ INSTALLED_APPS = [
     'core.access.apps.AccessConfig',
     # Accounts Module (User Profiles & Preferences)
     'core.accounts.apps.AccountsConfig',
+    # Business Services
+    'services.products.apps.ProductsConfig',
 ]
 
 MIDDLEWARE = [
