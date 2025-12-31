@@ -110,6 +110,23 @@ urlpatterns = [
     # thêm các module khác...
 ]
 ```
+
+### API Endpoints hiện có:
+
+#### Identity Module (Authentication)
+- `POST /api/identity/signup/` - Đăng ký tài khoản mới
+- `POST /api/identity/login/` - Đăng nhập
+- `POST /api/identity/logout/` - Đăng xuất
+- `GET /api/identity/check-auth/` - Kiểm tra trạng thái đăng nhập
+- `POST /api/identity/change-password/` - Đổi mật khẩu
+
+#### Accounts Module (Profile Management)
+- `GET /api/accounts/profile/` - Lấy thông tin profile
+- `POST /api/accounts/profile/update/` - Cập nhật profile
+- `GET /api/accounts/preferences/` - Lấy preferences (theme, language, etc.)
+- `POST /api/accounts/preferences/update/` - Cập nhật preferences
+
+**Chi tiết:** Xem [API_DOCUMENTATION.md](API_DOCUMENTATION.md) để biết chi tiết về request/response format và cách tích hợp với React frontend.
 ---
 
 ## 5. Nguyên tắc phụ thuộc (RẤT QUAN TRỌNG)
