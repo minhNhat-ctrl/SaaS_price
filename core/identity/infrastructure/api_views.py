@@ -158,7 +158,9 @@ def login_view(request):
         from django.contrib.auth import get_user_model
         User = get_user_model()
         user = User.objects.get(id=auth_token.user_id)
-        login(request, user)
+        
+        # Specify backend when logging in (required when multiple backends configured)
+        login(request, user, backend='django.contrib.auth.backends.ModelBackend')
         
         return JsonResponse({
             'success': True,

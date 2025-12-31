@@ -18,6 +18,11 @@ const menuItems: MenuItem[] = [
     icon: "📊",
   },
   {
+    label: "Profile",
+    path: "/profile",
+    icon: "👤",
+  },
+  {
     label: "Catalog",
     path: "/catalog",
     icon: "📦",

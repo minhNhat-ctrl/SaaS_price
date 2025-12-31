@@ -83,5 +83,6 @@ class Credential:
 class AuthToken:
     """Logical token representation (metadata only)."""
     token: str
+    user_id: UUID  # User ID associated with this token
     issued_at: datetime = field(default_factory=datetime.utcnow)
     expires_at: Optional[datetime] = None

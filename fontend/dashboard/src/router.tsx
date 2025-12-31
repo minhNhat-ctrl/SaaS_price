@@ -1,6 +1,10 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { MainLayout } from "./layout/MainLayout";
+import { ProtectedRoute } from "./shared/ProtectedRoute";
 import { DashboardHomePage } from "./pages/DashboardHomePage";
+import { LoginPage } from "./pages/LoginPage";
+import { SignupPage } from "./pages/SignupPage";
+import { ProfilePage } from "./pages/ProfilePage";
 import { CatalogPage } from "./modules/catalog/pages/CatalogPage";
 
 /**
@@ -22,6 +26,7 @@ interface RouteConfig {
   element: React.ReactNode;
   module: string; // Tham chiếu module backend
   label: string;
+  protected?: boolean; // Requires authentication
 }
 
 export const routeRegistry: RouteConfig[] = [
@@ -30,24 +35,47 @@ export const routeRegistry: RouteConfig[] = [
     element: <DashboardHomePage />,
     module: "dashboard",
     label: "Dashboard",
+    protected: true,
+  },
+  {
+    path: "/profile",
+    element: <ProfilePage />,
+    module: "accounts",
+    label: "Profile",
+    protected: true,
   },
   {
     path: "/catalog",
     element: <CatalogPage />,
     module: "catalog",
     label: "Catalog",
+    protected: true,
   },
 ];
 
 export function AppRouter() {
   return (
-    <MainLayout>
-      <Routes>
-        {routeRegistry.map((route) => (
-          <Route key={route.path} path={route.path} element={route.element} />
-        ))}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </MainLayout>
+    <Routes>
+      {/* Public routes */}
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignupPage />} />
+
+      {/* Protected routes */}
+      <Route
+        path="/*"
+        element={
+          <ProtectedRoute>
+            <MainLayout>
+              <Routes>
+                {routeRegistry.map((route) => (
+                  <Route key={route.path} path={route.path} element={route.element} />
+                ))}
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </MainLayout>
+          </ProtectedRoute>
+        }
+      />
+    </Routes>
   );
 }

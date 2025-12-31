@@ -48,7 +48,20 @@ class DjangoAllauthIdentityRepository(IdentityRepository):
         def _get():
             try:
                 user = User.objects.get(id=user_id)
-                return _user_to_domain(user)
+                # Get email verification status
+                email_verified = False
+                try:
+                    email_obj = EmailAddress.objects.get(user=user, email=user.email)
+                    email_verified = email_obj.verified
+                except EmailAddress.DoesNotExist:
+                    pass
+                
+                return UserIdentity(
+                    id=user.id,
+                    email=user.email,
+                    is_active=user.is_active,
+                    email_verified=email_verified,
+                )
             except User.DoesNotExist:
                 return None
 
@@ -59,7 +72,20 @@ class DjangoAllauthIdentityRepository(IdentityRepository):
         def _get():
             try:
                 user = User.objects.get(email=email)
-                return _user_to_domain(user)
+                # Get email verification status
+                email_verified = False
+                try:
+                    email_obj = EmailAddress.objects.get(user=user, email=user.email)
+                    email_verified = email_obj.verified
+                except EmailAddress.DoesNotExist:
+                    pass
+                
+                return UserIdentity(
+                    id=user.id,
+                    email=user.email,
+                    is_active=user.is_active,
+                    email_verified=email_verified,
+                )
             except User.DoesNotExist:
                 return None
 
@@ -68,7 +94,9 @@ class DjangoAllauthIdentityRepository(IdentityRepository):
     async def create_user(self, identity: UserIdentity, password: str) -> UserIdentity:
         @sync_to_async
         def _create():
+            # Use email as username for simplicity
             user = User.objects.create_user(
+                username=identity.email,  # Use email as username
                 email=identity.email,
                 password=password,
                 is_active=identity.is_active,
@@ -78,10 +106,15 @@ class DjangoAllauthIdentityRepository(IdentityRepository):
                 email=identity.email,
                 defaults={"verified": identity.email_verified, "primary": True},
             )
-            return user
+            
+            return UserIdentity(
+                id=user.id,
+                email=user.email,
+                is_active=user.is_active,
+                email_verified=identity.email_verified,
+            )
 
-        user = await _create()
-        return _user_to_domain(user)
+        return await _create()
 
     async def set_password(self, email: str, new_password: str) -> None:
         @sync_to_async
@@ -95,7 +128,9 @@ class DjangoAllauthIdentityRepository(IdentityRepository):
     async def verify_password(self, credential: Credential) -> bool:
         @sync_to_async
         def _auth():
-            user = authenticate(email=credential.email, password=credential.password)
+            # Django's authenticate uses username by default
+            # Since we're using email as username, authenticate with username=email
+            user = authenticate(username=credential.email, password=credential.password)
             return user is not None
 
         return await _auth()
@@ -125,7 +160,7 @@ class DjangoAllauthIdentityRepository(IdentityRepository):
                 raise IdentityNotFoundError(identity.email)
             # Use Django's default token generator (stateless) as logical token
             token_str = default_token_generator.make_token(user)
-            return AuthToken(token=token_str)
+            return AuthToken(token=token_str, user_id=user.id)
 
         return await _token()
 

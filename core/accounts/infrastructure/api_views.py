@@ -18,7 +18,7 @@ from asgiref.sync import async_to_sync
 
 from core.accounts.services import AccountsService
 from core.accounts.domain import ProfileScope, ProfileNotFoundError
-from core.accounts.infrastructure.django_models import (
+from core.accounts.infrastructure.django_repository import (
     DjangoProfileRepository,
     DjangoPreferencesRepository,
     DjangoNotificationSettingsRepository,
