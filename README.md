@@ -55,7 +55,6 @@ saas_project/
 ---
 
 ## 4. Quy ước cấu trúc một module (chuẩn)
-
 ```text
 module_name/
 ├── domain/            # Khái niệm nghiệp vụ thuần túy
@@ -67,12 +66,50 @@ module_name/
 │   └── xxx_repo.py
 ├── infrastructure/    # Django / ORM / HTTP
 │   ├── django_models.py
-│   ├── api_views.py
-│   └── middleware.py (nếu có)
+│   ├── api_views.py          # ← JSON endpoints (for React SPA)
+│   ├── urls.py               # ← API routes
+│   ├── django_admin.py       # ← Admin adapter
+│   └── middleware.py         # ← Optional
 ├── apps.py
 └── migrations/
 ```
 
+**❗ Lưu ý:** 
+- Module **KHÔNG có Django template** (dùng React SPA thay thế)
+- API view **chỉ trả JSON**, không render HTML
+- Nếu cần back-office, dùng Django Admin thông qua service layer
+
+
+## 4.1 Chuẩn hoá URL & namespacing API theo module
+
+- Mọi endpoint của module đặt dưới tiền tố `/api/<module>/`.
+- Mỗi `infrastructure/urls.py` cần `app_name` để namespacing rõ ràng.
+- `config/urls.py` include từng module theo prefix cố định.
+
+Ví dụ (module catalog):
+
+```python
+# services/catalog/infrastructure/urls.py
+app_name = "catalog_api"
+
+from django.urls import path
+from . import api_views
+
+urlpatterns = [
+    path('products/', api_views.list_products_view, name='products_list'),
+    # thêm các endpoint khác...
+]
+```
+
+```python
+# config/urls.py
+from django.urls import path, include
+
+urlpatterns = [
+    path('api/catalog/', include(('services.catalog.infrastructure.urls', 'catalog_api'))),
+    # thêm các module khác...
+]
+```
 ---
 
 ## 5. Nguyên tắc phụ thuộc (RẤT QUAN TRỌNG)
@@ -173,6 +210,47 @@ analytics/
 - Tạo module mới → admin dùng được ngay
 - Không phá kiến trúc khi scale
 - Admin trở thành công cụ test kiến trúc sống
+
+
+## 8.2 Cơ chế truy cập dữ liệu (Data Access Pattern)
+
+Có **2 entry point** cho dữ liệu:
+
+### A. API Endpoint (React Frontend chính)
+```
+HTTP Request → api_views.py → Service → Repository → DB
+```
+- Trả JSON
+- Dùng cho React SPA
+- Có thể dùng cho mobile app sau
+
+### B. Django Admin (Back-office & Testing)
+```
+Django Admin UI → admin.py (adapter) → Service → Repository → DB
+```
+- Trả HTML
+- Dùng cho admin quản lý
+- **Cấm** gọi ORM trực tiếp
+
+### ⚠️ Nguyên tắc:
+- **Cả 2 đều phải gọi qua Service layer**
+- **Không có "shortcut" trực tiếp ORM**
+- Nếu thay đổi logic → thay 1 chỗ (Service)
+- Both Admin & API đều được cập nhật
+
+### Diagram:
+```
+Django Admin ──┐
+               ├→ Service → Repository → DB
+React API ────┘
+
+(Service là SINGLE SOURCE OF TRUTH)
+```
+
+## 8.3 Frontend độc lập cùng domain
+
+- Frontend (React SPA) gọi relative path `/api/...` → không cần CORS nếu cùng domain.
+- Nếu chạy khác domain → cấu hình CORS ở settings và dùng base URL trong frontend.
 
 ## 9. Nguyên tắc mở rộng lâu dài
 
