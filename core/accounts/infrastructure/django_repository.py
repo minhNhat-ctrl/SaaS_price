@@ -185,8 +185,7 @@ def _preferences_model_to_domain(model: models.UserPreferences) -> DomainPrefere
         time_format=model.time_format,
         items_per_page=model.items_per_page,
         sidebar_collapsed=model.sidebar_collapsed,
-        preferences=model.custom_preferences,
-        created_at=model.created_at,
+        custom_preferences=model.custom_preferences,
         updated_at=model.updated_at,
     )
 
@@ -200,10 +199,10 @@ class DjangoPreferencesRepository(PreferencesRepository):
             model = models.UserPreferences(
                 user_id=preferences.user_id,
                 tenant_id=preferences.tenant_id,
-                theme=getattr(preferences, 'theme', 'LIGHT'),
+                theme=getattr(preferences, 'theme', 'light'),
                 language=getattr(preferences, 'language', 'en'),
                 timezone=getattr(preferences, 'timezone', 'UTC'),
-                custom_preferences=getattr(preferences, 'preferences', {}),
+                custom_preferences=getattr(preferences, 'custom_preferences', {}),
             )
             model.save()
             return _preferences_model_to_domain(model)
@@ -238,7 +237,7 @@ class DjangoPreferencesRepository(PreferencesRepository):
             model.theme = getattr(preferences, 'theme', model.theme)
             model.language = getattr(preferences, 'language', model.language)
             model.timezone = getattr(preferences, 'timezone', model.timezone)
-            model.custom_preferences = getattr(preferences, 'preferences', model.custom_preferences)
+            model.custom_preferences = getattr(preferences, 'custom_preferences', model.custom_preferences)
             model.save()
             return _preferences_model_to_domain(model)
         
@@ -401,3 +400,35 @@ class DjangoAvatarRepository(AvatarRepository):
                 return False
         
         return await _delete()
+    
+    async def upload_file(self, avatar_id: UUID, file_data: bytes, filename: str) -> str:
+        """
+        Upload avatar file to storage and return file path.
+        Infrastructure layer handles Django's file storage mechanism.
+        """
+        from django.core.files.base import ContentFile
+        from django.core.files.storage import default_storage
+        import os
+        
+        @sync_to_async
+        def _upload():
+            # Get avatar record
+            avatar_model = models.Avatar.objects.get(id=avatar_id)
+            
+            # Create storage path: avatars/<user_id>/<filename>
+            storage_path = os.path.join('avatars', str(avatar_model.user_id), filename)
+            
+            # Delete old file if exists
+            if avatar_model.file_path and default_storage.exists(avatar_model.file_path):
+                default_storage.delete(avatar_model.file_path)
+            
+            # Save new file
+            saved_path = default_storage.save(storage_path, ContentFile(file_data))
+            
+            # Update avatar model with new path
+            avatar_model.file_path = saved_path
+            avatar_model.save()
+            
+            return saved_path
+        
+        return await _upload()

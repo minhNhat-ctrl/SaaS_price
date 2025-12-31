@@ -49,6 +49,31 @@ def _parse_json_body(request) -> Dict[str, Any]:
         return {}
 
 
+def _preferences_to_dict(preferences) -> Dict[str, Any]:
+    """Convert UserPreferences dataclass to dictionary."""
+    if not preferences:
+        return {}
+    
+    return {
+        'id': str(preferences.id),
+        'user_id': str(preferences.user_id),
+        'language': preferences.language,
+        'timezone': preferences.timezone,
+        'date_format': preferences.date_format,
+        'time_format': preferences.time_format,
+        'theme': preferences.theme,
+        'sidebar_collapsed': preferences.sidebar_collapsed,
+        'compact_mode': preferences.compact_mode,
+        'items_per_page': preferences.items_per_page,
+        'default_view': preferences.default_view,
+        'show_onboarding': preferences.show_onboarding,
+        'enable_animations': preferences.enable_animations,
+        'enable_sound': preferences.enable_sound,
+        'custom_preferences': preferences.custom_preferences,
+        'updated_at': preferences.updated_at.isoformat() if preferences.updated_at else None,
+    }
+
+
 @require_http_methods(["GET"])
 def get_profile_view(request):
     """
@@ -281,7 +306,7 @@ def get_preferences_view(request):
         
         return JsonResponse({
             'success': True,
-            'preferences': preferences.preferences
+            'preferences': _preferences_to_dict(preferences)
         }, status=200)
         
     except Exception as e:
@@ -327,12 +352,12 @@ def update_preferences_view(request):
         preferences = async_to_sync(service.update_preferences)(
             user_id=request.user.id,
             tenant_id=tenant_id,
-            preferences=data
+            **data
         )
         
         return JsonResponse({
             'success': True,
-            'preferences': preferences.preferences,
+            'preferences': _preferences_to_dict(preferences),
             'message': 'Preferences updated successfully'
         }, status=200)
         
