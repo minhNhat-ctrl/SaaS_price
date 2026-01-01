@@ -1,9 +1,13 @@
 /**
  * Shared API client
  * Quy ước: API URL cố định, không sinh động
+ * 
+ * Sử dụng relative URL để Nginx proxy tự động forward tới backend
+ * ProfilePage và AuthContext đã hoạt động với pattern này
  */
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
+// Empty base URL = relative paths, proxied by Nginx
+const API_BASE_URL = process.env.REACT_APP_API_URL || "";
 
 interface Headers {
   [key: string]: string;
@@ -42,6 +46,7 @@ class ApiClient {
     const response = await fetch(`${this.baseURL}${endpoint}`, {
       method: "GET",
       headers: this.getHeaders(),
+      credentials: "include",
     });
 
     if (!response.ok) {
@@ -55,6 +60,7 @@ class ApiClient {
     const response = await fetch(`${this.baseURL}${endpoint}`, {
       method: "POST",
       headers: this.getHeaders(),
+      credentials: "include",
       body: JSON.stringify(data),
     });
 
@@ -69,6 +75,7 @@ class ApiClient {
     const response = await fetch(`${this.baseURL}${endpoint}`, {
       method: "PUT",
       headers: this.getHeaders(),
+      credentials: "include",
       body: JSON.stringify(data),
     });
 
@@ -83,6 +90,7 @@ class ApiClient {
     const response = await fetch(`${this.baseURL}${endpoint}`, {
       method: "DELETE",
       headers: this.getHeaders(),
+      credentials: "include",
     });
 
     if (!response.ok) {

@@ -15,6 +15,7 @@ Schema-per-Tenant:
 """
 import json
 import logging
+from functools import wraps
 from uuid import UUID
 from datetime import datetime
 from django.http import JsonResponse
@@ -45,6 +46,22 @@ from core.access.infrastructure.django_repository import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def login_required_api(view_func):
+    """
+    Decorator to require authentication for API endpoints.
+    Returns 401 Unauthorized if user is not authenticated.
+    """
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return JsonResponse({
+                'success': False,
+                'error': 'Authentication required'
+            }, status=401)
+        return view_func(request, *args, **kwargs)
+    return wrapper
 
 
 def _get_access_service() -> AccessService:
@@ -115,6 +132,7 @@ def _role_to_dict(role):
 
 @csrf_exempt
 @require_http_methods(["GET"])
+@login_required_api
 def list_memberships_view(request):
     """
     GET /api/access/memberships/ → Danh sách thành viên
@@ -145,7 +163,7 @@ def list_memberships_view(request):
                     'error': f'Invalid status: {status_param}'
                 }, status=400)
         
-        memberships = async_to_sync(service.list_memberships_by_tenant)(
+        memberships = async_to_sync(service.get_tenant_members)(
             tenant_id=UUID(tenant_id),
             status=status_filter
         )
@@ -165,6 +183,7 @@ def list_memberships_view(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@login_required_api
 def invite_member_view(request):
     """
     POST /api/access/memberships/invite/ → Mời thành viên mới
@@ -236,6 +255,7 @@ def invite_member_view(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@login_required_api
 def activate_membership_view(request, membership_id):
     """POST /api/access/memberships/<membership_id>/activate/ → Kích hoạt membership"""
     try:
@@ -262,6 +282,7 @@ def activate_membership_view(request, membership_id):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@login_required_api
 def revoke_membership_view(request, membership_id):
     """POST /api/access/memberships/<membership_id>/revoke/ → Thu hồi membership"""
     try:
@@ -288,6 +309,7 @@ def revoke_membership_view(request, membership_id):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@login_required_api
 def assign_roles_view(request, membership_id):
     """
     POST /api/access/memberships/<membership_id>/assign-roles/ → Gán roles
@@ -340,6 +362,7 @@ def assign_roles_view(request, membership_id):
 
 @csrf_exempt
 @require_http_methods(["GET"])
+@login_required_api
 def list_roles_view(request):
     """
     GET /api/access/roles/ → Danh sách roles
@@ -390,6 +413,7 @@ def list_roles_view(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@login_required_api
 def create_custom_role_view(request):
     """
     POST /api/access/roles/ → Tạo custom role
@@ -449,6 +473,7 @@ def create_custom_role_view(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@login_required_api
 def check_permission_view(request):
     """
     POST /api/access/check-permission/ → Kiểm tra quyền

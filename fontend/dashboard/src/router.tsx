@@ -6,6 +6,8 @@ import { LoginPage } from "./pages/LoginPage";
 import { SignupPage } from "./pages/SignupPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { CatalogPage } from "./modules/catalog/pages/CatalogPage";
+import { ProjectsPage } from "./modules/tenants/pages/ProjectsPage";
+import { MembersPage } from "./modules/access/pages/MembersPage";
 
 /**
  * Router Configuration
@@ -42,6 +44,20 @@ export const routeRegistry: RouteConfig[] = [
     element: <ProfilePage />,
     module: "accounts",
     label: "Profile",
+    protected: true,
+  },
+  {
+    path: "/projects",
+    element: <ProjectsPage />,
+    module: "tenants",
+    label: "Projects",
+    protected: true,
+  },
+  {
+    path: "/members",
+    element: <MembersPage />,
+    module: "access",
+    label: "Members",
     protected: true,
   },
   {

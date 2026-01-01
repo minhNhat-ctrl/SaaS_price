@@ -15,6 +15,7 @@ Schema-per-Tenant:
 """
 import json
 import logging
+from functools import wraps
 from uuid import UUID
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
@@ -31,6 +32,22 @@ from core.tenants.services.tenant_service import TenantService
 from core.tenants.infrastructure.django_repository import DjangoTenantRepository
 
 logger = logging.getLogger(__name__)
+
+
+def login_required_api(view_func):
+    """
+    Decorator to require authentication for API endpoints.
+    Returns 401 Unauthorized if user is not authenticated.
+    """
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return JsonResponse({
+                'success': False,
+                'error': 'Authentication required'
+            }, status=401)
+        return view_func(request, *args, **kwargs)
+    return wrapper
 
 
 def _get_tenant_service() -> TenantService:
@@ -69,6 +86,7 @@ def _tenant_to_dict(tenant):
 
 @csrf_exempt
 @require_http_methods(["GET"])
+@login_required_api
 def list_tenants_view(request):
     """GET /api/tenants/ → Danh sách tất cả tenant"""
     try:
@@ -103,6 +121,7 @@ def list_tenants_view(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@login_required_api
 def create_tenant_view(request):
     """POST /api/tenants/ → Tạo tenant mới (auto-create schema)"""
     try:
@@ -153,6 +172,7 @@ def create_tenant_view(request):
 
 @csrf_exempt
 @require_http_methods(["GET"])
+@login_required_api
 def get_tenant_view(request, tenant_id):
     """GET /api/tenants/<tenant_id>/ → Lấy thông tin tenant"""
     try:
@@ -187,6 +207,7 @@ def get_tenant_view(request, tenant_id):
 
 @csrf_exempt
 @require_http_methods(["PATCH", "PUT"])
+@login_required_api
 def update_tenant_view(request, tenant_id):
     """PATCH/PUT /api/tenants/<tenant_id>/ → Cập nhật tenant"""
     try:
@@ -226,6 +247,7 @@ def update_tenant_view(request, tenant_id):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@login_required_api
 def activate_tenant_view(request, tenant_id):
     """POST /api/tenants/<tenant_id>/activate/ → Activate tenant"""
     try:
@@ -254,6 +276,7 @@ def activate_tenant_view(request, tenant_id):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@login_required_api
 def suspend_tenant_view(request, tenant_id):
     """POST /api/tenants/<tenant_id>/suspend/ → Suspend tenant"""
     try:
@@ -282,6 +305,7 @@ def suspend_tenant_view(request, tenant_id):
 
 @csrf_exempt
 @require_http_methods(["DELETE"])
+@login_required_api
 def delete_tenant_view(request, tenant_id):
     """DELETE /api/tenants/<tenant_id>/ → Xóa tenant (soft delete)"""
     try:
@@ -316,6 +340,7 @@ def delete_tenant_view(request, tenant_id):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@login_required_api
 def add_domain_view(request, tenant_id):
     """POST /api/tenants/<tenant_id>/add-domain/ → Thêm domain mới"""
     try:

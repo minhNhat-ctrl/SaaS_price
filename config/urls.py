@@ -45,10 +45,5 @@ urlpatterns = [
     path('api/access/', include('core.access.urls')),
 ]
 
-# Print admin URL for reference (remove in production)
-if settings.DEBUG:
-    print(f"\n{'='*60}")
-    print(f"[ADMIN URL] http://dj.2kvietnam.com/admin/{ADMIN_HASH}/")
-    print(f"[ADMIN URL] http://localhost:8005/admin/{ADMIN_HASH}/")
-    print(f"[ADMIN HASH] {ADMIN_HASH}")
-    print(f"{'='*60}\n")
+# Admin URL for reference (check via manage.py shell or logs)
+# Admin path: /admin/{ADMIN_HASH}/

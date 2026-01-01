@@ -18,6 +18,16 @@ const menuItems: MenuItem[] = [
     icon: "📊",
   },
   {
+    label: "Projects",
+    path: "/projects",
+    icon: "📁",
+  },
+  {
+    label: "Members",
+    path: "/members",
+    icon: "👥",
+  },
+  {
     label: "Profile",
     path: "/profile",
     icon: "👤",
@@ -27,7 +37,6 @@ const menuItems: MenuItem[] = [
     path: "/catalog",
     icon: "📦",
   },
-  // Thêm menu khi có module mới
 ];
 
 export function Sidebar() {
