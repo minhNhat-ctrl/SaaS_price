@@ -11,6 +11,7 @@ Multi-tenancy:
 """
 from typing import Optional, List
 from uuid import UUID
+from asgiref.sync import sync_to_async
 
 from core.tenants.domain import (
     Tenant,
@@ -34,9 +35,9 @@ class DjangoTenantRepository(TenantRepository):
     - Work with django-tenants schema context
     """
 
-    def _dto_to_domain(self, db_tenant: TenantModel) -> Tenant:
+    async def _dto_to_domain(self, db_tenant: TenantModel) -> Tenant:
         """
-        Convert Django ORM model → Domain entity
+        Convert Django ORM model → Domain entity (async safe)
         
         Args:
             db_tenant: Django TenantModel (từ django-tenants)
@@ -44,13 +45,14 @@ class DjangoTenantRepository(TenantRepository):
         Returns:
             Domain Tenant entity
         """
-        # Load domains từ Domain model
+        # Load domains in a thread-safe way
+        db_domains = await sync_to_async(list)(
+            DomainModel.objects.filter(tenant=db_tenant)
+        )
+
         domains = [
-            TenantDomainValue(
-                domain=d.domain,
-                is_primary=d.is_primary,
-            )
-            for d in DomainModel.objects.filter(tenant=db_tenant)
+            TenantDomainValue(domain=d.domain, is_primary=d.is_primary)
+            for d in db_domains
         ]
 
         return Tenant(
@@ -138,11 +140,11 @@ class DjangoTenantRepository(TenantRepository):
             Domain Tenant entity hoặc None
         """
         try:
-            # Query public schema (tenants table nằm ở public)
-            db_tenant = await TenantModel.objects.aget(id=tenant_id)
-            return self._dto_to_domain(db_tenant)
+            db_tenant = await sync_to_async(TenantModel.objects.get)(id=tenant_id)
         except TenantModel.DoesNotExist:
             return None
+
+        return await self._dto_to_domain(db_tenant)
 
     async def get_by_slug(self, slug: str) -> Optional[Tenant]:
         """
@@ -155,8 +157,8 @@ class DjangoTenantRepository(TenantRepository):
             Domain Tenant entity hoặc None
         """
         try:
-            db_tenant = await TenantModel.objects.aget(slug=slug)
-            return self._dto_to_domain(db_tenant)
+            db_tenant = await sync_to_async(TenantModel.objects.get)(slug=slug)
+            return await self._dto_to_domain(db_tenant)
         except TenantModel.DoesNotExist:
             return None
 
@@ -175,9 +177,9 @@ class DjangoTenantRepository(TenantRepository):
             Domain Tenant entity hoặc None
         """
         try:
-            domain_obj = await DomainModel.objects.select_related('tenant').aget(
-                domain=domain
-            )
+            domain_obj = await sync_to_async(
+                DomainModel.objects.select_related('tenant').get
+            )(domain=domain)
             return await self.get_by_id(domain_obj.tenant_id)
         except DomainModel.DoesNotExist:
             return None
@@ -193,12 +195,16 @@ class DjangoTenantRepository(TenantRepository):
             Danh sách Domain Tenant entities
         """
         query = TenantModel.objects.all()
-        
         if status:
             query = query.filter(status=status.value)
-        
-        db_tenants = await query.aall()
-        return [self._dto_to_domain(db_tenant) for db_tenant in db_tenants]
+
+        db_tenants = await sync_to_async(list)(query)
+
+        tenants: List[Tenant] = []
+        for db_tenant in db_tenants:
+            tenants.append(await self._dto_to_domain(db_tenant))
+
+        return tenants
 
     async def update(self, tenant: Tenant) -> Tenant:
         """

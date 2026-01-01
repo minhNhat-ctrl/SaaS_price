@@ -1,202 +1,403 @@
 """
-API Views - Django REST Framework Views
+API Views - JSON endpoints for Tenant Management
 
-Chỉ layer này nhận Django HttpRequest và trả HttpResponse
-Input validation, exception handling, serialization đều ở đây
+Nguyên tắc:
+- Chỉ nhận HttpRequest và trả JsonResponse
+- Gọi service layer để xử lý business logic
+- Không gọi ORM trực tiếp
+- Validate input ở đây
+- Handle exceptions từ service
+
+Schema-per-Tenant:
+- Mỗi tenant có riêng PostgreSQL schema
+- django-tenants auto-create schema khi tạo tenant
+- Queries tự động filter theo schema context
 """
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+import json
+import logging
 from uuid import UUID
+from django.http import JsonResponse
+from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
+from asgiref.sync import async_to_sync
 
 from core.tenants.domain import (
     TenantNotFoundError,
     TenantAlreadyExistsError,
     InvalidTenantSlugError,
+    TenantStatus,
 )
-from core.tenants.services import TenantService
+from core.tenants.services.tenant_service import TenantService
+from core.tenants.infrastructure.django_repository import DjangoTenantRepository
 
-# TODO: Implement serializers
-# from .serializers import TenantSerializer, CreateTenantSerializer
+logger = logging.getLogger(__name__)
 
 
-class TenantViewSet(viewsets.ViewSet):
+def _get_tenant_service() -> TenantService:
+    """Factory function to create TenantService with dependencies"""
+    repository = DjangoTenantRepository()
+    return TenantService(repository)
+
+
+def _parse_json_body(request):
+    """Parse JSON body từ request"""
+    try:
+        return json.loads(request.body.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise ValueError(f"Invalid JSON body: {str(e)}")
+
+
+def _tenant_to_dict(tenant):
+    """Convert Tenant entity to dict for JSON response"""
+    return {
+        'id': str(tenant.id),
+        'name': tenant.name,
+        'slug': tenant.slug,
+        'schema_name': tenant.schema_name,
+        'status': tenant.status.value,
+        'domains': [
+            {
+                'domain': d.domain,
+                'is_primary': d.is_primary,
+            }
+            for d in tenant.domains
+        ],
+        'created_at': tenant.created_at.isoformat() if tenant.created_at else None,
+        'updated_at': tenant.updated_at.isoformat() if tenant.updated_at else None,
+    }
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def list_tenants_view(request):
+    """GET /api/tenants/ → Danh sách tất cả tenant"""
+    try:
+        service = _get_tenant_service()
+        
+        # Parse status filter
+        status_param = request.GET.get('status')
+        status_filter = None
+        if status_param:
+            try:
+                status_filter = TenantStatus(status_param)
+            except ValueError:
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Invalid status: {status_param}'
+                }, status=400)
+        
+        tenants = async_to_sync(service.list_all_tenants)(status=status_filter)
+        
+        return JsonResponse({
+            'success': True,
+            'tenants': [_tenant_to_dict(t) for t in tenants]
+        })
+        
+    except Exception as e:
+        logger.error(f"List tenants error: {str(e)}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def create_tenant_view(request):
+    """POST /api/tenants/ → Tạo tenant mới (auto-create schema)"""
+    try:
+        data = _parse_json_body(request)
+        
+        # Validate required fields
+        required_fields = ['name', 'slug', 'domain']
+        missing_fields = [f for f in required_fields if not data.get(f)]
+        if missing_fields:
+            return JsonResponse({
+                'success': False,
+                'error': f'Missing required fields: {", ".join(missing_fields)}'
+            }, status=400)
+        
+        service = _get_tenant_service()
+        
+        # Create tenant (auto-create schema via django-tenants)
+        tenant = async_to_sync(service.create_tenant)(
+            name=data['name'],
+            slug=data['slug'],
+            domain=data['domain'],
+            is_primary=True
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'tenant': _tenant_to_dict(tenant),
+            'message': 'Tenant created successfully'
+        }, status=201)
+        
+    except (InvalidTenantSlugError, TenantAlreadyExistsError) as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=400)
+    except ValueError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=400)
+    except Exception as e:
+        logger.error(f"Create tenant error: {str(e)}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': f'Internal error: {str(e)}'
+        }, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_tenant_view(request, tenant_id):
+    """GET /api/tenants/<tenant_id>/ → Lấy thông tin tenant"""
+    try:
+        service = _get_tenant_service()
+        # tenant_id from URL is already UUID object (converted by Django)
+        if not isinstance(tenant_id, UUID):
+            tenant_id = UUID(tenant_id)
+        tenant = async_to_sync(service.get_tenant_by_id)(tenant_id)
+        
+        return JsonResponse({
+            'success': True,
+            'tenant': _tenant_to_dict(tenant)
+        })
+        
+    except TenantNotFoundError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=404)
+    except ValueError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Invalid tenant ID format'
+        }, status=400)
+    except Exception as e:
+        logger.error(f"Get tenant error: {str(e)}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["PATCH", "PUT"])
+def update_tenant_view(request, tenant_id):
+    """PATCH/PUT /api/tenants/<tenant_id>/ → Cập nhật tenant"""
+    try:
+        data = _parse_json_body(request)
+        service = _get_tenant_service()
+        
+        if not isinstance(tenant_id, UUID):
+            tenant_id = UUID(tenant_id)
+        
+        tenant = async_to_sync(service.update_tenant_info)(
+            tenant_id=tenant_id,
+            name=data.get('name')
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'tenant': _tenant_to_dict(tenant)
+        })
+        
+    except TenantNotFoundError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=404)
+    except ValueError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=400)
+    except Exception as e:
+        logger.error(f"Update tenant error: {str(e)}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def activate_tenant_view(request, tenant_id):
+    """POST /api/tenants/<tenant_id>/activate/ → Activate tenant"""
+    try:
+        service = _get_tenant_service()
+        if not isinstance(tenant_id, UUID):
+            tenant_id = UUID(tenant_id)
+        tenant = async_to_sync(service.activate_tenant)(tenant_id)
+        
+        return JsonResponse({
+            'success': True,
+            'tenant': _tenant_to_dict(tenant)
+        })
+        
+    except TenantNotFoundError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=404)
+    except Exception as e:
+        logger.error(f"Activate tenant error: {str(e)}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def suspend_tenant_view(request, tenant_id):
+    """POST /api/tenants/<tenant_id>/suspend/ → Suspend tenant"""
+    try:
+        service = _get_tenant_service()
+        if not isinstance(tenant_id, UUID):
+            tenant_id = UUID(tenant_id)
+        tenant = async_to_sync(service.suspend_tenant)(tenant_id)
+        
+        return JsonResponse({
+            'success': True,
+            'tenant': _tenant_to_dict(tenant)
+        })
+        
+    except TenantNotFoundError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=404)
+    except Exception as e:
+        logger.error(f"Suspend tenant error: {str(e)}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["DELETE"])
+def delete_tenant_view(request, tenant_id):
+    """DELETE /api/tenants/<tenant_id>/ → Xóa tenant (soft delete)"""
+    try:
+        service = _get_tenant_service()
+        if not isinstance(tenant_id, UUID):
+            tenant_id = UUID(tenant_id)
+        success = async_to_sync(service.delete_tenant)(tenant_id)
+        
+        if success:
+            return JsonResponse({
+                'success': True,
+                'message': 'Tenant deleted successfully'
+            })
+        else:
+            return JsonResponse({
+                'success': False,
+                'error': 'Failed to delete tenant'
+            }, status=400)
+        
+    except TenantNotFoundError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=404)
+    except Exception as e:
+        logger.error(f"Delete tenant error: {str(e)}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def add_domain_view(request, tenant_id):
+    """POST /api/tenants/<tenant_id>/add-domain/ → Thêm domain mới"""
+    try:
+        data = _parse_json_body(request)
+        
+        if not data.get('domain'):
+            return JsonResponse({
+                'success': False,
+                'error': 'Missing required field: domain'
+            }, status=400)
+        
+        service = _get_tenant_service()
+        if not isinstance(tenant_id, UUID):
+            tenant_id = UUID(tenant_id)
+        tenant = async_to_sync(service.add_domain_to_tenant)(
+            tenant_id=tenant_id,
+            domain=data['domain'],
+            is_primary=data.get('is_primary', False)
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'tenant': _tenant_to_dict(tenant)
+        })
+        
+    except TenantNotFoundError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=404)
+    except ValueError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=400)
+    except Exception as e:
+        logger.error(f"Add domain error: {str(e)}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+# ============================================================
+# Combined Views (to handle multiple methods on same path)
+# ============================================================
+
+@csrf_exempt
+def tenants_list_create_view(request):
     """
-    API Endpoints cho Tenant
-    
-    Use-case:
-    - POST /api/tenants/ → Tạo tenant mới
-    - GET /api/tenants/{id}/ → Lấy thông tin tenant
-    - PATCH /api/tenants/{id}/ → Cập nhật tenant
-    - DELETE /api/tenants/{id}/ → Xóa tenant
-    - GET /api/tenants/ → Danh sách tenant (admin only)
+    Combined view for list and create
+    GET /api/tenants/ → List tenants
+    POST /api/tenants/ → Create tenant
     """
-    permission_classes = [IsAuthenticated]
+    if request.method == 'GET':
+        return list_tenants_view(request)
+    elif request.method == 'POST':
+        return create_tenant_view(request)
+    else:
+        return JsonResponse({
+            'success': False,
+            'error': 'Method not allowed'
+        }, status=405)
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # TODO: Inject concrete TenantService implementation
-        # self.service = TenantService(DjangoTenantRepository())
-        self.service = None
 
-    def list(self, request):
-        """
-        GET /api/tenants/ → Danh sách tất cả tenant (admin only)
-        
-        Query params:
-        - status: Lọc theo trạng thái (active, suspended, deleted)
-        """
-        try:
-            # TODO: Check permission (admin only)
-            # status_filter = request.query_params.get('status')
-            # tenants = await self.service.list_all_tenants(status=status_filter)
-            # return Response(TenantSerializer(tenants, many=True).data)
-            return Response({"error": "Not implemented"}, status=status.HTTP_501_NOT_IMPLEMENTED)
-        except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+@csrf_exempt
+def tenant_detail_view(request, tenant_id):
+    """
+    Combined view for get, update, delete
+    GET /api/tenants/<id>/ → Get tenant
+    PATCH/PUT /api/tenants/<id>/ → Update tenant
+    DELETE /api/tenants/<id>/ → Delete tenant
+    """
+    if request.method == 'GET':
+        return get_tenant_view(request, tenant_id)
+    elif request.method in ['PATCH', 'PUT']:
+        return update_tenant_view(request, tenant_id)
+    elif request.method == 'DELETE':
+        return delete_tenant_view(request, tenant_id)
+    else:
+        return JsonResponse({
+            'success': False,
+            'error': 'Method not allowed'
+        }, status=405)
 
-    def create(self, request):
-        """
-        POST /api/tenants/ → Tạo tenant mới (superuser only)
-        
-        Request body:
-        {
-            "name": "Company Name",
-            "slug": "company-slug",
-            "domain": "company.example.com"
-        }
-        """
-        try:
-            # TODO: Validate input với serializer
-            # serializer = CreateTenantSerializer(data=request.data)
-            # if not serializer.is_valid():
-            #     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-            #
-            # tenant = await self.service.create_tenant(
-            #     name=serializer.validated_data['name'],
-            #     slug=serializer.validated_data['slug'],
-            #     domain=serializer.validated_data['domain'],
-            # )
-            #
-            # return Response(TenantSerializer(tenant).data, status=status.HTTP_201_CREATED)
-            return Response({"error": "Not implemented"}, status=status.HTTP_501_NOT_IMPLEMENTED)
-        except TenantAlreadyExistsError as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        except InvalidTenantSlugError as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-    def retrieve(self, request, pk=None):
-        """
-        GET /api/tenants/{id}/ → Lấy thông tin tenant
-        """
-        try:
-            # TODO: tenant = await self.service.get_tenant_by_id(UUID(pk))
-            # return Response(TenantSerializer(tenant).data)
-            return Response({"error": "Not implemented"}, status=status.HTTP_501_NOT_IMPLEMENTED)
-        except TenantNotFoundError as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-    def partial_update(self, request, pk=None):
-        """
-        PATCH /api/tenants/{id}/ → Cập nhật thông tin tenant
-        
-        Request body:
-        {
-            "name": "New Name"
-        }
-        """
-        try:
-            # TODO: tenant = await self.service.update_tenant_info(
-            #     tenant_id=UUID(pk),
-            #     name=request.data.get('name'),
-            # )
-            # return Response(TenantSerializer(tenant).data)
-            return Response({"error": "Not implemented"}, status=status.HTTP_501_NOT_IMPLEMENTED)
-        except TenantNotFoundError as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-    @action(detail=True, methods=['post'])
-    def activate(self, request, pk=None):
-        """
-        POST /api/tenants/{id}/activate/ → Activate tenant
-        """
-        try:
-            # TODO: tenant = await self.service.activate_tenant(UUID(pk))
-            # return Response(TenantSerializer(tenant).data)
-            return Response({"error": "Not implemented"}, status=status.HTTP_501_NOT_IMPLEMENTED)
-        except TenantNotFoundError as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-    @action(detail=True, methods=['post'])
-    def suspend(self, request, pk=None):
-        """
-        POST /api/tenants/{id}/suspend/ → Suspend tenant
-        """
-        try:
-            # TODO: tenant = await self.service.suspend_tenant(UUID(pk))
-            # return Response(TenantSerializer(tenant).data)
-            return Response({"error": "Not implemented"}, status=status.HTTP_501_NOT_IMPLEMENTED)
-        except TenantNotFoundError as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-    @action(detail=True, methods=['post'])
-    def add_domain(self, request, pk=None):
-        """
-        POST /api/tenants/{id}/add-domain/ → Thêm domain mới
-        
-        Request body:
-        {
-            "domain": "newdomain.example.com",
-            "is_primary": false
-        }
-        """
-        try:
-            # TODO: tenant = await self.service.add_domain_to_tenant(
-            #     tenant_id=UUID(pk),
-            #     domain=request.data.get('domain'),
-            #     is_primary=request.data.get('is_primary', False),
-            # )
-            # return Response(TenantSerializer(tenant).data)
-            return Response({"error": "Not implemented"}, status=status.HTTP_501_NOT_IMPLEMENTED)
-        except TenantNotFoundError as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_404_NOT_FOUND,
-            )

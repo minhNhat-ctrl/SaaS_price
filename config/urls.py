@@ -38,8 +38,11 @@ urlpatterns = [
     # Accounts module - profile management
     path('api/accounts/', include('core.accounts.urls')),
     
-    # Include other app URLs
-    # path('api/', include('core.tenants.urls')),  # TODO: Install djangorestframework first
+    # Tenants module - project/tenant management
+    path('api/tenants/', include('core.tenants.urls')),
+    
+    # Access module - RBAC and membership
+    path('api/access/', include('core.access.urls')),
 ]
 
 # Print admin URL for reference (remove in production)

@@ -31,13 +31,29 @@ ALLOWED_HOSTS = ['dj.2kvietnam.com', 'app.2kvietnam.com', 'localhost', '127.0.0.
 
 # Application definition
 
-INSTALLED_APPS = [
-    'django.contrib.sites',
-    'django.contrib.admin',
-    'django.contrib.auth',
+SHARED_APPS = [
+    # Multi-tenant core (registers management commands like migrate_schemas)
+    'django_tenants',
+    # Django core (shared across public + tenant schemas)
     'django.contrib.contenttypes',
+    'django.contrib.auth',
     'django.contrib.sessions',
     'django.contrib.messages',
+    'django.contrib.admin',
+    'django.contrib.sites',
+    'django.contrib.staticfiles',
+    # Tenant metadata lives in the public schema
+    'core.tenants.apps.TenantsConfig',
+]
+
+TENANT_APPS = [
+    # Apps that exist inside each tenant schema
+    'django.contrib.contenttypes',
+    'django.contrib.auth',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.admin',
+    'django.contrib.sites',
     'django.contrib.staticfiles',
     # Authentication provider (allauth)
     'allauth',
@@ -45,8 +61,6 @@ INSTALLED_APPS = [
     'allauth.socialaccount',
     # Core Admin Module (phải load trước các modules khác)
     'core.admin_core.apps.AdminCoreConfig',
-    # Platform Modules
-    'core.tenants.apps.TenantsConfig',
     # Identity Module
     'core.identity.apps.IdentityConfig',
     # Access Module (Authorization & RBAC)
@@ -56,6 +70,9 @@ INSTALLED_APPS = [
     # Business Services
     'services.products.apps.ProductsConfig',
 ]
+
+# Order per django-tenants docs: shared apps first, followed by tenant apps
+INSTALLED_APPS = SHARED_APPS + [app for app in TENANT_APPS if app not in SHARED_APPS]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -124,9 +141,10 @@ else:
         }
     }
 
-# Django-tenants configuration
-TENANT_MODEL = 'core.tenants.infrastructure.django_models.Tenant'
-TENANT_DOMAIN_MODEL = 'core.tenants.infrastructure.django_models.TenantDomain'
+# Django-tenants configuration (app_label.ModelName)
+TENANT_MODEL = 'tenants.Tenant'
+TENANT_DOMAIN_MODEL = 'tenants.TenantDomain'
+DATABASE_ROUTERS = ['django_tenants.routers.TenantSyncRouter']
 
 
 # Password validation

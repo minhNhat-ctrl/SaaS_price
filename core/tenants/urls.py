@@ -1,27 +1,20 @@
 """
 URL Configuration cho Tenant API endpoints
 """
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
+from django.urls import path
+from core.tenants.infrastructure import api_views
 
-from core.tenants.infrastructure.api_views import TenantViewSet
-
-# Router để tự động generate URLs từ ViewSet
-router = DefaultRouter()
-router.register(r'tenants', TenantViewSet, basename='tenant')
+app_name = 'tenants'
 
 urlpatterns = [
-    path('api/', include(router.urls)),
+    # List and create (combined view will handle both GET and POST)
+    path('', api_views.tenants_list_create_view, name='list_create'),
+    
+    # Get, update, delete (combined view will handle GET, PATCH, DELETE)
+    path('<uuid:tenant_id>/', api_views.tenant_detail_view, name='detail'),
+    
+    # Actions
+    path('<uuid:tenant_id>/activate/', api_views.activate_tenant_view, name='activate'),
+    path('<uuid:tenant_id>/suspend/', api_views.suspend_tenant_view, name='suspend'),
+    path('<uuid:tenant_id>/add-domain/', api_views.add_domain_view, name='add_domain'),
 ]
-
-"""
-Generated URLs:
-- GET /api/tenants/ → list
-- POST /api/tenants/ → create
-- GET /api/tenants/{id}/ → retrieve
-- PATCH /api/tenants/{id}/ → partial_update
-- DELETE /api/tenants/{id}/ → destroy (nếu implement)
-- POST /api/tenants/{id}/activate/ → activate
-- POST /api/tenants/{id}/suspend/ → suspend
-- POST /api/tenants/{id}/add-domain/ → add_domain
-"""
