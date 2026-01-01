@@ -88,7 +88,11 @@ def _tenant_to_dict(tenant):
 @require_http_methods(["GET"])
 @login_required_api
 def list_tenants_view(request):
-    """GET /api/tenants/ → Danh sách tất cả tenant"""
+    """
+    GET /api/tenants/ → Danh sách tenant mà user có quyền truy cập
+    
+    ⚠️ SECURITY: Chỉ trả về tenants mà user có membership
+    """
     try:
         service = _get_tenant_service()
         
@@ -104,7 +108,17 @@ def list_tenants_view(request):
                     'error': f'Invalid status: {status_param}'
                 }, status=400)
         
-        tenants = async_to_sync(service.list_all_tenants)(status=status_filter)
+        # Get user ID
+        from uuid import uuid5, NAMESPACE_DNS
+        user_uuid = uuid5(NAMESPACE_DNS, f"user:{request.user.id}")
+        
+        # Get tenants for this user only (SECURITY FIX)
+        tenants = async_to_sync(service.list_tenants_by_user)(
+            user_id=user_uuid,
+            status=status_filter
+        )
+        
+        logger.info(f"User {request.user.id} accessed {len(tenants)} tenants")
         
         return JsonResponse({
             'success': True,
@@ -112,7 +126,7 @@ def list_tenants_view(request):
         })
         
     except Exception as e:
-        logger.error(f"List tenants error: {str(e)}")
+        logger.error(f"List tenants error: {str(e)}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': str(e)
@@ -123,7 +137,11 @@ def list_tenants_view(request):
 @require_http_methods(["POST"])
 @login_required_api
 def create_tenant_view(request):
-    """POST /api/tenants/ → Tạo tenant mới (auto-create schema)"""
+    """
+    POST /api/tenants/ → Tạo tenant mới (auto-create schema)
+    
+    SECURITY: Tự động tạo membership với role "admin" cho user tạo tenant
+    """
     try:
         data = _parse_json_body(request)
         
@@ -145,6 +163,43 @@ def create_tenant_view(request):
             domain=data['domain'],
             is_primary=True
         )
+        
+        # SECURITY FIX: Auto-create membership for creator with admin role
+        try:
+            from uuid import uuid5, NAMESPACE_DNS
+            from core.access.services.access_service import AccessService
+            from core.access.infrastructure.django_repository import (
+                DjangoMembershipRepository,
+                DjangoRoleRepository,
+                DjangoPermissionRepository,
+                DjangoPolicyRepository,
+            )
+            
+            user_uuid = uuid5(NAMESPACE_DNS, f"user:{request.user.id}")
+            
+            access_service = AccessService(
+                membership_repo=DjangoMembershipRepository(),
+                role_repo=DjangoRoleRepository(),
+                permission_repo=DjangoPermissionRepository(),
+                policy_repo=DjangoPolicyRepository(),
+            )
+            
+            # Create membership with admin role for tenant creator
+            membership = async_to_sync(access_service.invite_member)(
+                user_id=user_uuid,
+                tenant_id=tenant.id,
+                role_slugs=['admin'],  # Creator gets admin role
+                invited_by=user_uuid,  # Self-invited
+            )
+            
+            # Activate immediately (no need to accept invitation)
+            async_to_sync(access_service.activate_membership)(membership.id)
+            
+            logger.info(f"Created tenant {tenant.id} with admin membership for user {request.user.id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to create membership for new tenant: {e}")
+            # Don't fail the whole request, tenant was created successfully
         
         return JsonResponse({
             'success': True,

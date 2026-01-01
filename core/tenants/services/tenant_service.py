@@ -170,7 +170,10 @@ class TenantService:
 
     async def list_all_tenants(self, status: Optional[TenantStatus] = None) -> List[Tenant]:
         """
-        Use-case: Lấy danh sách tất cả tenant
+        Use-case: Lấy danh sách tất cả tenant (ADMIN ONLY)
+        
+        ⚠️ WARNING: Chỉ dùng cho admin/superuser
+        User thường phải dùng list_tenants_by_user()
         
         Args:
             status: Lọc theo trạng thái (optional)
@@ -179,6 +182,67 @@ class TenantService:
             Danh sách Tenant
         """
         return await self.repository.list_all(status=status)
+
+    async def list_tenants_by_user(
+        self,
+        user_id: UUID,
+        status: Optional[TenantStatus] = None
+    ) -> List[Tenant]:
+        """
+        Use-case: Lấy danh sách tenant mà user có quyền truy cập
+        
+        Quy trình:
+        1. Lấy tất cả memberships của user từ access module
+        2. Extract tenant_ids từ memberships
+        3. Load tenant entities từ repository
+        4. Filter theo status nếu có
+        
+        Args:
+            user_id: UUID của user
+            status: Lọc theo trạng thái (optional)
+        
+        Returns:
+            Danh sách Tenant mà user có quyền
+        """
+        # Import access service để lấy memberships
+        from core.access.services.access_service import AccessService
+        from core.access.infrastructure.django_repository import (
+            DjangoMembershipRepository,
+            DjangoRoleRepository,
+            DjangoPermissionRepository,
+            DjangoPolicyRepository,
+        )
+        
+        # Get user's memberships
+        access_service = AccessService(
+            membership_repo=DjangoMembershipRepository(),
+            role_repo=DjangoRoleRepository(),
+            permission_repo=DjangoPermissionRepository(),
+            policy_repo=DjangoPolicyRepository(),
+        )
+        
+        memberships = await access_service.get_user_memberships(user_id)
+        
+        # Extract unique tenant IDs
+        tenant_ids = list(set(m.tenant_id for m in memberships))
+        
+        if not tenant_ids:
+            return []  # User has no memberships
+        
+        # Load tenants by IDs
+        tenants = []
+        for tenant_id in tenant_ids:
+            try:
+                tenant = await self.repository.get_by_id(tenant_id)
+                if tenant:
+                    # Filter by status if specified
+                    if status is None or tenant.status == status:
+                        tenants.append(tenant)
+            except Exception as e:
+                logger.warning(f"Failed to load tenant {tenant_id}: {e}")
+                continue
+        
+        return tenants
 
     async def update_tenant_info(
         self,

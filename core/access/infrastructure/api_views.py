@@ -88,6 +88,7 @@ def _membership_to_dict(membership):
         'id': str(membership.id),
         'user_id': str(membership.user_id),
         'tenant_id': str(membership.tenant_id),
+        'email': membership.metadata.get('invited_email', ''),  # Get email from metadata
         'status': membership.status.value,
         'roles': [
             {
@@ -186,7 +187,103 @@ def list_memberships_view(request):
 @login_required_api
 def invite_member_view(request):
     """
-    POST /api/access/memberships/invite/ → Mời thành viên mới
+    POST /api/access/memberships/invite/ → Mời thành viên mới bằng EMAIL
+    
+    Body: {
+        "tenant_id": "uuid",
+        "email": "user@example.com",
+        "role_slugs": ["member", "viewer"],
+        "expires_at": "2024-12-31T23:59:59Z"  // optional
+    }
+    
+    Note: invited_by lấy từ request.user.id
+    """
+    try:
+        data = _parse_json_body(request)
+        
+        # Validate required fields
+        required_fields = ['tenant_id', 'email', 'role_slugs']
+        missing_fields = [f for f in required_fields if not data.get(f)]
+        if missing_fields:
+            return JsonResponse({
+                'success': False,
+                'error': f'Missing required fields: {", ".join(missing_fields)}'
+            }, status=400)
+        
+        # Validate email format
+        email = data['email'].strip().lower()
+        if '@' not in email or '.' not in email.split('@')[1]:
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid email format'
+            }, status=400)
+        
+        service = _get_access_service()
+        
+        # Parse expires_at if provided
+        expires_at = None
+        if data.get('expires_at'):
+            try:
+                expires_at = datetime.fromisoformat(data['expires_at'].replace('Z', '+00:00'))
+            except ValueError:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Invalid expires_at format (use ISO 8601)'
+                }, status=400)
+        
+        # invited_by = current authenticated user
+        from uuid import UUID as ConvertUUID
+        try:
+            # Django User model uses integer ID, not UUID
+            # For now, create a deterministic UUID from user ID
+            from uuid import uuid5, NAMESPACE_DNS
+            invited_by = uuid5(NAMESPACE_DNS, f"user:{request.user.id}")
+            logger.info(f"Invite member by user {request.user.id} (UUID: {invited_by})")
+        except (ValueError, AttributeError) as e:
+            logger.error(f"Failed to get user ID: {e}, user={request.user}, authenticated={request.user.is_authenticated}")
+            return JsonResponse({
+                'success': False,
+                'error': f'Invalid user session: {str(e)}'
+            }, status=401)
+        
+        membership = async_to_sync(service.invite_member_by_email)(
+            tenant_id=UUID(data['tenant_id']),
+            email=email,
+            role_slugs=data['role_slugs'],
+            invited_by=invited_by,
+            expires_at=expires_at
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'membership': _membership_to_dict(membership),
+            'message': f'Invitation sent to {email}'
+        }, status=201)
+        
+    except (MembershipAlreadyExistsError, RoleNotFoundError) as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=400)
+    except ValueError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=400)
+    except Exception as e:
+        logger.error(f"Invite member error: {str(e)}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': f'Internal error: {str(e)}'
+        }, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@login_required_api
+def invite_member_view_old(request):
+    """
+    POST /api/access/memberships/invite-by-userid/ → Mời thành viên mới (old version - cần user_id)
     
     Body: {
         "user_id": "uuid",

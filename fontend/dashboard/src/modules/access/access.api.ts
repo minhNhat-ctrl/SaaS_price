@@ -71,7 +71,7 @@ export async function getMembership(id: string): Promise<Membership> {
 export async function inviteMember(input: {
   tenant_id: string;
   email: string;
-  role_ids: string[];
+  role_slugs: string[];
 }): Promise<Membership> {
   const data = await apiCall<{ success: boolean; membership?: Membership; error?: string }>(
     "/api/access/memberships/invite/",

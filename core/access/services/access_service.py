@@ -106,6 +106,69 @@ class AccessService:
         
         return await self.membership_repo.create(membership)
     
+    async def invite_member_by_email(
+        self,
+        tenant_id: UUID,
+        email: str,
+        role_slugs: List[str],
+        invited_by: UUID,
+        expires_at: Optional[datetime] = None,
+    ) -> Membership:
+        """
+        Invite member to tenant by email (không cần user_id trước).
+        
+        Flow:
+        1. Kiểm tra xem email đã có user chưa
+        2. Nếu chưa → tạo temporary user_id (UUID from email hash)
+        3. Tạo membership với status INVITED
+        4. Khi user đăng ký và xác nhận email → activate membership
+        
+        Args:
+            tenant_id: Tenant to join
+            email: Email to invite
+            role_slugs: List of role slugs to assign
+            invited_by: User who sent invitation
+            expires_at: Optional expiration date
+        
+        Returns:
+            Membership entity
+        
+        Raises:
+            MembershipAlreadyExistsError: If membership exists for this email
+            RoleNotFoundError: If role doesn't exist
+        """
+        from uuid import uuid5, NAMESPACE_DNS
+        
+        # Generate deterministic UUID from email (consistent across calls)
+        user_id = uuid5(NAMESPACE_DNS, f"invite:{email}".lower())
+        
+        # Check if membership already exists for this email
+        existing = await self.membership_repo.get_by_user_and_tenant(user_id, tenant_id)
+        if existing:
+            raise MembershipAlreadyExistsError(email, str(tenant_id))
+        
+        # Load roles
+        roles = []
+        for slug in role_slugs:
+            role = await self.role_repo.get_by_slug(slug, tenant_id)
+            if not role:
+                raise RoleNotFoundError(slug)
+            roles.append(role)
+        
+        # Create membership
+        membership = Membership(
+            id=UUID(int=0),  # Will be set by repository
+            user_id=user_id,
+            tenant_id=tenant_id,
+            roles=roles,
+            status=MembershipStatus.INVITED,
+            invited_by=invited_by,
+            expires_at=expires_at,
+            metadata={'invited_email': email},  # Store email for reference
+        )
+        
+        return await self.membership_repo.create(membership)
+    
     async def activate_membership(self, membership_id: UUID) -> Membership:
         """
         Activate invited membership (user accepted invitation).

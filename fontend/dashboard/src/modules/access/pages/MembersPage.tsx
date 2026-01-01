@@ -26,7 +26,7 @@ export function MembersPage() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRoles, setInviteRoles] = useState<string[]>(["member"]);
+  const [inviteRoleSlugs, setInviteRoleSlugs] = useState<string[]>(["member"]);
 
   // Load tenants on mount
   useEffect(() => {
@@ -100,12 +100,12 @@ export function MembersPage() {
       const newMember = await inviteMember({
         tenant_id: selectedTenantId,
         email: inviteEmail,
-        role_ids: inviteRoles,
+        role_slugs: inviteRoleSlugs,
       });
       setMembers((prev) => [...prev, newMember]);
       setShowInviteModal(false);
       setInviteEmail("");
-      setInviteRoles(["member"]);
+      setInviteRoleSlugs(["member"]);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to invite member");
     } finally {
@@ -189,8 +189,8 @@ export function MembersPage() {
                   <label className="form-label">Role</label>
                   <select
                     className="form-select"
-                    value={inviteRoles[0]}
-                    onChange={(e) => setInviteRoles([e.target.value])}
+                    value={inviteRoleSlugs[0]}
+                    onChange={(e) => setInviteRoleSlugs([e.target.value])}
                   >
                     <option value="member">Member</option>
                     <option value="admin">Admin</option>
