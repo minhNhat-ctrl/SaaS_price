@@ -95,14 +95,16 @@ def _membership_to_dict(membership):
                 'id': str(r.id),
                 'name': r.name,
                 'slug': r.slug,
-                'type': r.type.value,
+                'type': r.role_type.value,  # Convert enum to string
             }
             for r in membership.roles
         ],
         'invited_by': str(membership.invited_by) if membership.invited_by else None,
         'invited_at': membership.invited_at.isoformat() if membership.invited_at else None,
-        'activated_at': membership.activated_at.isoformat() if membership.activated_at else None,
+        'joined_at': membership.joined_at.isoformat() if membership.joined_at else None,  # Changed from activated_at
         'expires_at': membership.expires_at.isoformat() if membership.expires_at else None,
+        'created_at': membership.created_at.isoformat() if membership.created_at else None,
+        'updated_at': membership.updated_at.isoformat() if membership.updated_at else None,
     }
 
 

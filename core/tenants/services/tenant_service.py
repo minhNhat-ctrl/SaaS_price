@@ -221,13 +221,21 @@ class TenantService:
             policy_repo=DjangoPolicyRepository(),
         )
         
+        logger.info(f"[LIST_TENANTS_BY_USER] Fetching memberships for user_id: {user_id}")
         memberships = await access_service.get_user_memberships(user_id)
+        logger.info(f"[LIST_TENANTS_BY_USER] Found {len(memberships)} memberships")
+        
+        for m in memberships:
+            logger.info(f"  - Membership ID: {m.id}, Tenant: {m.tenant_id}, Status: {m.status.value}")
         
         # Extract unique tenant IDs
         tenant_ids = list(set(m.tenant_id for m in memberships))
         
         if not tenant_ids:
+            logger.warning(f"[LIST_TENANTS_BY_USER] User {user_id} has NO memberships!")
             return []  # User has no memberships
+        
+        logger.info(f"[LIST_TENANTS_BY_USER] Loading {len(tenant_ids)} tenants...")
         
         # Load tenants by IDs
         tenants = []
@@ -238,6 +246,7 @@ class TenantService:
                     # Filter by status if specified
                     if status is None or tenant.status == status:
                         tenants.append(tenant)
+                        logger.info(f"  - Loaded tenant: {tenant.name} (ID: {tenant_id})")
             except Exception as e:
                 logger.warning(f"Failed to load tenant {tenant_id}: {e}")
                 continue

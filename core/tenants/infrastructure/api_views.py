@@ -112,13 +112,17 @@ def list_tenants_view(request):
         from uuid import uuid5, NAMESPACE_DNS
         user_uuid = uuid5(NAMESPACE_DNS, f"user:{request.user.id}")
         
+        logger.info(f"[LIST_TENANTS] Django User ID: {request.user.id}, UUID: {user_uuid}, Username: {request.user.username}")
+        
         # Get tenants for this user only (SECURITY FIX)
         tenants = async_to_sync(service.list_tenants_by_user)(
             user_id=user_uuid,
             status=status_filter
         )
         
-        logger.info(f"User {request.user.id} accessed {len(tenants)} tenants")
+        logger.info(f"[LIST_TENANTS] User {request.user.id} has {len(tenants)} tenants")
+        for t in tenants:
+            logger.info(f"  - Tenant: {t.name} (ID: {t.id})")
         
         return JsonResponse({
             'success': True,
@@ -165,41 +169,40 @@ def create_tenant_view(request):
         )
         
         # SECURITY FIX: Auto-create membership for creator with admin role
-        try:
-            from uuid import uuid5, NAMESPACE_DNS
-            from core.access.services.access_service import AccessService
-            from core.access.infrastructure.django_repository import (
-                DjangoMembershipRepository,
-                DjangoRoleRepository,
-                DjangoPermissionRepository,
-                DjangoPolicyRepository,
-            )
-            
-            user_uuid = uuid5(NAMESPACE_DNS, f"user:{request.user.id}")
-            
-            access_service = AccessService(
-                membership_repo=DjangoMembershipRepository(),
-                role_repo=DjangoRoleRepository(),
-                permission_repo=DjangoPermissionRepository(),
-                policy_repo=DjangoPolicyRepository(),
-            )
-            
-            # Create membership with admin role for tenant creator
-            membership = async_to_sync(access_service.invite_member)(
-                user_id=user_uuid,
-                tenant_id=tenant.id,
-                role_slugs=['admin'],  # Creator gets admin role
-                invited_by=user_uuid,  # Self-invited
-            )
-            
-            # Activate immediately (no need to accept invitation)
-            async_to_sync(access_service.activate_membership)(membership.id)
-            
-            logger.info(f"Created tenant {tenant.id} with admin membership for user {request.user.id}")
-            
-        except Exception as e:
-            logger.error(f"Failed to create membership for new tenant: {e}")
-            # Don't fail the whole request, tenant was created successfully
+        from uuid import uuid5, NAMESPACE_DNS
+        from core.access.services.access_service import AccessService
+        from core.access.infrastructure.django_repository import (
+            DjangoMembershipRepository,
+            DjangoRoleRepository,
+            DjangoPermissionRepository,
+            DjangoPolicyRepository,
+        )
+        
+        user_uuid = uuid5(NAMESPACE_DNS, f"user:{request.user.id}")
+        
+        logger.info(f"[CREATE_TENANT] Creating membership - Django User ID: {request.user.id}, UUID: {user_uuid}, Tenant ID: {tenant.id}")
+        
+        access_service = AccessService(
+            membership_repo=DjangoMembershipRepository(),
+            role_repo=DjangoRoleRepository(),
+            permission_repo=DjangoPermissionRepository(),
+            policy_repo=DjangoPolicyRepository(),
+        )
+        
+        # Create membership with admin role for tenant creator
+        membership = async_to_sync(access_service.invite_member)(
+            user_id=user_uuid,
+            tenant_id=tenant.id,
+            role_slugs=['admin'],  # Creator gets admin role
+            invited_by=user_uuid,  # Self-invited
+        )
+        
+        logger.info(f"[CREATE_TENANT] Membership created: {membership.id}, activating...")
+        
+        # Activate immediately (no need to accept invitation)
+        async_to_sync(access_service.activate_membership)(membership.id)
+        
+        logger.info(f"[CREATE_TENANT] SUCCESS - Tenant {tenant.id} with admin membership {membership.id} for user {request.user.id}")
         
         return JsonResponse({
             'success': True,

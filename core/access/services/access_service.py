@@ -5,7 +5,7 @@ Business logic for managing memberships, roles, and permissions.
 No Django dependencies - pure business logic.
 """
 from typing import List, Optional, Dict, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime
 
 from core.access.domain import (
@@ -85,17 +85,21 @@ class AccessService:
         if existing:
             raise MembershipAlreadyExistsError(str(user_id), str(tenant_id))
         
-        # Load roles
+        # Load roles - try system roles first (tenant_id=None), then tenant-specific roles
         roles = []
         for slug in role_slugs:
-            role = await self.role_repo.get_by_slug(slug, tenant_id)
+            # Try system role first (predefined roles)
+            role = await self.role_repo.get_by_slug(slug, tenant_id=None)
+            if not role:
+                # Try tenant-specific role
+                role = await self.role_repo.get_by_slug(slug, tenant_id=tenant_id)
             if not role:
                 raise RoleNotFoundError(slug)
             roles.append(role)
         
         # Create membership
         membership = Membership(
-            id=UUID(int=0),  # Will be set by repository
+            id=uuid4(),  # Generate unique ID
             user_id=user_id,
             tenant_id=tenant_id,
             roles=roles,
@@ -147,17 +151,21 @@ class AccessService:
         if existing:
             raise MembershipAlreadyExistsError(email, str(tenant_id))
         
-        # Load roles
+        # Load roles - try system roles first (tenant_id=None), then tenant-specific roles
         roles = []
         for slug in role_slugs:
-            role = await self.role_repo.get_by_slug(slug, tenant_id)
+            # Try system role first (predefined roles)
+            role = await self.role_repo.get_by_slug(slug, tenant_id=None)
+            if not role:
+                # Try tenant-specific role
+                role = await self.role_repo.get_by_slug(slug, tenant_id=tenant_id)
             if not role:
                 raise RoleNotFoundError(slug)
             roles.append(role)
         
         # Create membership
         membership = Membership(
-            id=UUID(int=0),  # Will be set by repository
+            id=uuid4(),  # Generate unique ID
             user_id=user_id,
             tenant_id=tenant_id,
             roles=roles,
@@ -253,7 +261,10 @@ class AccessService:
         if not membership:
             raise MembershipNotFoundError("", "")
         
-        role = await self.role_repo.get_by_slug(role_slug, membership.tenant_id)
+        # Try system role first, then tenant-specific role
+        role = await self.role_repo.get_by_slug(role_slug, tenant_id=None)
+        if not role:
+            role = await self.role_repo.get_by_slug(role_slug, membership.tenant_id)
         if not role:
             raise RoleNotFoundError(role_slug)
         

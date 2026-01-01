@@ -16,18 +16,21 @@ export function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>("all"); // all, active, suspended
   
   // Create project modal state
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
   const [newProject, setNewProject] = useState({ name: "", slug: "", domain: "" });
 
-  const loadProjects = async () => {
+  const loadProjects = async (status?: string) => {
     try {
       setLoading(true);
       setError(null);
-      // Load only active projects by default
-      const data = await listTenants("active");
+      // Load projects based on filter: all, active, or suspended
+      const filterStatus = status || statusFilter;
+      const apiStatus = filterStatus === "all" ? undefined : (filterStatus as "active" | "suspended");
+      const data = await listTenants(apiStatus);
       setProjects(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load projects");
@@ -39,7 +42,7 @@ export function ProjectsPage() {
 
   useEffect(() => {
     loadProjects();
-  }, []);
+  }, [statusFilter]); // Reload when filter changes
 
   const handleCreate = async () => {
     if (!newProject.name || !newProject.slug || !newProject.domain) {
@@ -62,10 +65,9 @@ export function ProjectsPage() {
   const handleActivate = async (id: string) => {
     try {
       setActionLoading(id);
-      const updated = await activateTenant(id);
-      setProjects((prev) =>
-        prev.map((p) => (p.id === id ? updated : p))
-      );
+      await activateTenant(id);
+      // Reload projects to reflect changes
+      await loadProjects();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to activate project");
     } finally {
@@ -76,10 +78,9 @@ export function ProjectsPage() {
   const handleSuspend = async (id: string) => {
     try {
       setActionLoading(id);
-      const updated = await suspendTenant(id);
-      setProjects((prev) =>
-        prev.map((p) => (p.id === id ? updated : p))
-      );
+      await suspendTenant(id);
+      // Reload projects to reflect changes
+      await loadProjects();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to suspend project");
     } finally {
@@ -113,7 +114,7 @@ export function ProjectsPage() {
         {error}
         <button
           className="btn btn-sm btn-outline-danger ms-2"
-          onClick={loadProjects}
+          onClick={() => loadProjects()}
         >
           Try Again
         </button>
@@ -140,6 +141,31 @@ export function ProjectsPage() {
         >
           + New Project
         </button>
+      </div>
+
+      {/* Status Filter Tabs */}
+      <div style={{ marginBottom: "16px", borderBottom: "1px solid #dee2e6" }}>
+        <div style={{ display: "flex", gap: "0" }}>
+          {["all", "active", "suspended"].map((status) => (
+            <button
+              key={status}
+              onClick={() => setStatusFilter(status)}
+              style={{
+                padding: "8px 16px",
+                border: "none",
+                background: "none",
+                cursor: "pointer",
+                borderBottom: statusFilter === status ? "2px solid #0d6efd" : "2px solid transparent",
+                color: statusFilter === status ? "#0d6efd" : "#6c757d",
+                fontWeight: statusFilter === status ? 600 : 400,
+                textTransform: "capitalize",
+                transition: "all 0.2s",
+              }}
+            >
+              {status}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Create Project Modal */}
@@ -211,12 +237,14 @@ export function ProjectsPage() {
       )}
 
       <div style={{ marginBottom: "16px", fontSize: "13px", color: "#666" }}>
-        {projects.length} active project{projects.length !== 1 ? "s" : ""}
+        {projects.length} {statusFilter === "all" ? "" : statusFilter} project{projects.length !== 1 ? "s" : ""}
       </div>
 
       {projects.length === 0 ? (
         <div className="alert alert-warning" role="status">
-          No active projects. Create one to get started.
+          {statusFilter === "all" 
+            ? "No projects. Create one to get started." 
+            : `No ${statusFilter} projects.`}
         </div>
       ) : (
         <ProjectTable
