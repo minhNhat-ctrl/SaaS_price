@@ -43,6 +43,9 @@ urlpatterns = [
     
     # Access module - RBAC and membership
     path('api/access/', include('core.access.urls')),
+    
+    # Products module - product management and price tracking
+    path('api/products/', include('services.products.api.urls')),
 ]
 
 # Admin URL for reference (check via manage.py shell or logs)
