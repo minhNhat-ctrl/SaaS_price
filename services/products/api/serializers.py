@@ -11,14 +11,10 @@ from typing import Dict, Any
 class ProductURLSerializer(serializers.Serializer):
     """Product URL serializer"""
     id = serializers.UUIDField(read_only=True)
-    domain = serializers.CharField(max_length=255)
-    full_url = serializers.CharField(max_length=2048)
-    marketplace_type = serializers.CharField(max_length=50)
-    currency = serializers.CharField(max_length=10, default="USD")
-    is_active = serializers.BooleanField(default=True)
-    meta = serializers.JSONField(default=dict)
+    url = serializers.CharField(max_length=2048)
+    marketplace = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    is_primary = serializers.BooleanField(default=False)
     created_at = serializers.DateTimeField(read_only=True)
-    updated_at = serializers.DateTimeField(read_only=True)
 
 
 class PriceRecordSerializer(serializers.Serializer):
@@ -71,11 +67,16 @@ class UpdateProductSerializer(serializers.Serializer):
 
 class AddProductURLSerializer(serializers.Serializer):
     """Add product URL request serializer"""
-    domain = serializers.CharField(max_length=255)
-    full_url = serializers.CharField(max_length=2048)
-    marketplace_type = serializers.CharField(max_length=50)
-    currency = serializers.CharField(max_length=10, default="USD")
+    url = serializers.CharField(max_length=2048)
+    marketplace = serializers.CharField(max_length=255, required=False, allow_blank=True)
     is_primary = serializers.BooleanField(default=False)
+
+
+class UpdateProductURLSerializer(serializers.Serializer):
+    """Update product URL request serializer"""
+    url = serializers.CharField(max_length=2048, required=False)
+    marketplace = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    is_primary = serializers.BooleanField(required=False)
 
 
 class RecordPriceSerializer(serializers.Serializer):

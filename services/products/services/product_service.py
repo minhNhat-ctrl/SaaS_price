@@ -5,7 +5,7 @@ Orchestrates product management operations.
 No Django dependencies - pure business logic.
 """
 from typing import Optional, List, Dict, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime, timedelta
 
 from services.products.domain import (
@@ -96,7 +96,7 @@ class ProductService:
         
         # Create product
         product = TenantProduct(
-            id=UUID(int=0),  # Will be set by repository
+            id=uuid4(),  # Generate unique ID
             tenant_id=tenant_id,
             name=name,
             sku=sku,
@@ -268,38 +268,46 @@ class ProductService:
         self,
         product_id: UUID,
         url: str,
-        domain: str,
-        marketplace_type: MarketplaceType,
-        currency: str = "USD",
+        marketplace: Optional[str] = None,
+        is_primary: bool = False,
+        tenant_id: Optional[UUID] = None,
         **meta
     ) -> SharedProductURL:
         """
-        Add URL to shared product.
+        Add URL to product.
         
         Args:
-            product_id: Shared product ID
+            product_id: Product ID
             url: Full URL
-            domain: Domain name
-            marketplace_type: Marketplace type
-            currency: Currency code
-            **meta: Additional metadata (region, seller, variant)
+            marketplace: Marketplace name (e.g., Amazon, eBay)
+            is_primary: Whether this is the primary URL
+            tenant_id: Tenant ID (for multi-tenant context)
+            **meta: Additional metadata
         
         Returns:
             Created product URL
+            
+        Raises:
+            DuplicateProductURLError: If URL already exists (when url_hash support is available)
         """
-        # Check if URL already exists
+        from uuid import uuid4
+        from services.products.domain.exceptions import DuplicateProductURLError
+        
+        # Check if URL already exists (case-sensitive check for now)
+        # Full case-insensitive duplicate prevention will be available once url_hash column is in public schema
         existing = await self.product_url_repo.get_by_url(url)
         if existing:
-            return existing
+            raise DuplicateProductURLError(url)
         
-        # Create product URL
+        # Create product URL with simplified fields
         product_url = SharedProductURL(
-            id=UUID(int=0),
+            id=uuid4(),
             product_id=product_id,
-            domain=domain,
+            domain=marketplace or "unknown",
             full_url=url,
-            marketplace_type=marketplace_type,
-            currency=currency,
+            marketplace_type=marketplace or "other",
+            currency="USD",
+            is_active=not is_primary,  # Map is_primary to is_active
             meta=meta,
         )
         
@@ -313,6 +321,15 @@ class ProductService:
         """Get all URLs for shared product."""
         return await self.product_url_repo.list_by_product(product_id, is_active)
     
+    async def list_product_urls(
+        self,
+        product_id: UUID,
+        tenant_id: Optional[UUID] = None,
+        **kwargs
+    ) -> List[SharedProductURL]:
+        """List all URLs for product (tenant_id is optional for API)."""
+        return await self.get_product_urls(product_id)
+    
     async def deactivate_product_url(self, url_id: UUID) -> SharedProductURL:
         """Deactivate product URL."""
         product_url = await self.product_url_repo.get_by_id(url_id)
@@ -320,6 +337,53 @@ class ProductService:
             product_url.deactivate()
             return await self.product_url_repo.update(product_url)
         return product_url
+    
+    async def update_product_url(
+        self,
+        url_id: UUID,
+        url: Optional[str] = None,
+        marketplace: Optional[str] = None,
+        is_primary: Optional[bool] = None,
+    ) -> SharedProductURL:
+        """
+        Update product URL.
+        
+        Args:
+            url_id: Product URL ID
+            url: New URL value
+            marketplace: New marketplace name
+            is_primary: Update primary flag
+        
+        Returns:
+            Updated product URL
+        """
+        product_url = await self.product_url_repo.get_by_id(url_id)
+        if not product_url:
+            raise ValueError(f"Product URL {url_id} not found")
+        
+        if url:
+            product_url.full_url = url
+        
+        if marketplace:
+            product_url.domain = marketplace
+            product_url.marketplace_type = marketplace
+        
+        if is_primary is not None:
+            product_url.is_active = not is_primary
+        
+        return await self.product_url_repo.update(product_url)
+    
+    async def delete_product_url(self, url_id: UUID) -> bool:
+        """
+        Delete product URL.
+        
+        Args:
+            url_id: Product URL ID
+        
+        Returns:
+            True if deleted, False if not found
+        """
+        return await self.product_url_repo.delete(url_id)
     
     # ============================================================
     # Price History Management
@@ -355,7 +419,7 @@ class ProductService:
             raise InvalidPriceError(price)
         
         price_record = SharedPriceHistory(
-            id=UUID(int=0),
+            id=uuid4(),
             product_url_id=product_url_id,
             price=price,
             currency=currency,
@@ -377,7 +441,7 @@ class ProductService:
                 continue  # Skip invalid prices
             
             record = SharedPriceHistory(
-                id=UUID(int=0),
+                id=uuid4(),
                 product_url_id=data['product_url_id'],
                 price=data['price'],
                 currency=data.get('currency', 'USD'),

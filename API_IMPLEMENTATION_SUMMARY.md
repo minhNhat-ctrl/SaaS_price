@@ -83,6 +83,9 @@ $ curl http://127.0.0.1:8005/api/tenants/
 **Product URL Management (Tracking Links):**
 - `GET /api/products/tenants/{tenant_id}/products/{product_id}/urls/` - List product URLs
 - `POST /api/products/tenants/{tenant_id}/products/{product_id}/urls/` - Add tracking URL
+- `GET /api/products/tenants/{tenant_id}/products/{product_id}/urls/{url_id}/` - Get URL details
+- `PATCH /api/products/tenants/{tenant_id}/products/{product_id}/urls/{url_id}/` - Update URL
+- `DELETE /api/products/tenants/{tenant_id}/products/{product_id}/urls/{url_id}/` - Delete URL
 
 **Price History Tracking:**
 - `GET /api/products/tenants/{tenant_id}/products/{product_id}/urls/{url_id}/prices/` - Get price history

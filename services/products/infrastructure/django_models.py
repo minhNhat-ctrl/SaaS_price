@@ -5,6 +5,7 @@ Infrastructure layer - Django ORM implementation.
 Implements tenant-aware and shared models.
 """
 import uuid
+import hashlib
 from django.db import models
 from django.contrib.postgres.indexes import GinIndex
 
@@ -139,7 +140,8 @@ class SharedProductURL(models.Model):
     
     # URL Info
     domain = models.CharField(max_length=255, db_index=True)
-    full_url = models.TextField(unique=True, help_text="Full product URL")
+    full_url = models.TextField(help_text="Full product URL")
+    # url_hash = models.CharField(max_length=64, unique=True, db_index=True, help_text="SHA256 hash of normalized URL for deduplication")  # Will add via migration
     marketplace_type = models.CharField(max_length=50, choices=MARKETPLACE_CHOICES, default='CUSTOM', db_index=True)
     
     # Price info
@@ -167,6 +169,24 @@ class SharedProductURL(models.Model):
     
     def __str__(self):
         return f"{self.domain} - {self.marketplace_type}"
+    
+    @staticmethod
+    def normalize_url(url: str) -> str:
+        """Normalize URL for consistent hashing (lowercase, remove trailing slash)"""
+        return url.lower().rstrip('/')
+    
+    @staticmethod
+    def hash_url(url: str) -> str:
+        """Generate SHA256 hash of normalized URL"""
+        normalized = SharedProductURL.normalize_url(url)
+        return hashlib.sha256(normalized.encode()).hexdigest()
+    
+    def save(self, *args, **kwargs):
+        """Auto-generate url_hash before saving (disabled while url_hash column not in public schema)"""
+        # Once url_hash column is available in public schema, uncomment this:
+        # if not self.url_hash:
+        #     self.url_hash = self.hash_url(self.full_url)
+        super().save(*args, **kwargs)
 
 
 class SharedPriceHistory(models.Model):

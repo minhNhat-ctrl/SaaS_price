@@ -14,6 +14,8 @@ urlpatterns = [
     
     # Product URLs (GET list, POST add)
     path('tenants/<str:tenant_id>/products/<str:product_id>/urls/', views.product_urls_view, name='product-urls'),
+    # Product URLs Detail (GET, PATCH update, DELETE)
+    path('tenants/<str:tenant_id>/products/<str:product_id>/urls/<str:url_id>/', views.product_url_detail_view, name='product-url-detail'),
     
     # Price History (GET history, POST record)
     path('tenants/<str:tenant_id>/products/<str:product_id>/urls/<str:url_id>/prices/', 

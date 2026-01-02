@@ -189,6 +189,9 @@ class SharedProductURL:
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
     
+    # URL Hash for deduplication (optional, only available when url_hash column exists)
+    url_hash: str = ""
+    
     def deactivate(self):
         """Deactivate URL."""
         self.is_active = False

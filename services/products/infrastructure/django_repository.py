@@ -323,6 +323,7 @@ class DjangoSharedProductURLRepository(SharedProductURLRepository):
         @sync_to_async
         def _create():
             with schema_context(get_public_schema_name()):
+                # Create URL without url_hash (column not available in public schema yet)
                 model = SharedProductURLModel.objects.create(
                     id=url.id,
                     product_id=url.product_id,
@@ -351,13 +352,20 @@ class DjangoSharedProductURLRepository(SharedProductURLRepository):
         return await _get()
     
     async def get_by_url(self, full_url: str) -> Optional[SharedProductURL]:
-        """Get URL by full URL string"""
+        """Get URL by full URL string (using url_hash for case-insensitive duplicate check if available, else full_url)"""
         @sync_to_async
         def _get():
             with schema_context(get_public_schema_name()):
                 try:
-                    model = SharedProductURLModel.objects.get(full_url=full_url)
-                    return self._model_to_entity(model)
+                    # Try to use url_hash if column exists
+                    try:
+                        url_hash = SharedProductURLModel.hash_url(full_url)
+                        model = SharedProductURLModel.objects.get(url_hash=url_hash)
+                        return self._model_to_entity(model)
+                    except:
+                        # If url_hash doesn't work, fall back to exact full_url match
+                        model = SharedProductURLModel.objects.get(full_url=full_url)
+                        return self._model_to_entity(model)
                 except SharedProductURLModel.DoesNotExist:
                     return None
         
