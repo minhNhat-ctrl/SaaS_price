@@ -1,0 +1,93 @@
+Phân loại entity trong product-service
+A. Tenant-owned entities (Tenant Schema)
+
+👉 Gắn chặt với nghiệp vụ của 1 tenant cụ thể
+Product (TenantProduct)
+Chỉ chứa thông tin “định danh – quản trị” mà tenant kiểm soát.
+
+Thuộc tính nên có
+name
+internal_code
+sku (tenant-defined)
+barcode
+qr_code
+gtin
+brand (reference)
+status (active, archived,…)
+tenant_id (logic, không nhất thiết là FK vật lý)
+
+⛔ KHÔNG nên chứa:
+price history
+dữ liệu crawl
+domain / marketplace
+
+📌 Lý do:
+Tenant A và Tenant B có thể:
+quản lý cùng một sản phẩm vật lý
+nhưng cách đặt tên, SKU, phân loại khác nhau
+
+B. Shared entities (Public Schema)
+👉 Dữ liệu cross-tenant, dùng chung, có thể rất lớn
+1️⃣ Canonical Product (SharedProduct)
+
+Đây là “product vật lý / product chuẩn hoá”
+Mục tiêu
+Gộp nhiều tenant product → 1 sản phẩm chuẩn
+Là trục liên kết lịch sử giá & URL
+
+Thuộc tính
+id (global)
+
+gtin / ean / upc
+
+manufacturer
+
+normalized_name
+
+specs_hash (optional)
+
+created_at
+
+📌 TenantProduct → map tới SharedProduct
+
+2️⃣ Product URL (SharedProductURL)
+
+Một sản phẩm có nhiều URL (Amazon, Rakuten, Shopee, website hãng…)
+
+Thuộc tính
+
+product_id (SharedProduct)
+
+domain
+
+full_url
+
+marketplace_type
+
+currency
+
+is_active
+
+meta (json: region, seller, variant…)
+
+📌 Không thuộc tenant
+→ Vì URL marketplace là dữ liệu khách quan
+
+3️⃣ Price History (SharedPriceHistory)
+
+Dữ liệu time-series, volume lớn, chỉ đọc
+
+Thuộc tính
+
+product_url_id
+
+price
+
+currency
+
+recorded_at
+
+source (crawler, api, manual…)
+
+📌 Share 100%
+📌 Có thể dùng partition / hypertable (TimescaleDB)

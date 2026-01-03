@@ -1,0 +1,25 @@
+
+API Layer (api/) - Products Service
+
+Serializers: Input validation & output formatting
+Views: Thin controllers with method dispatch
+URLs: Clean routing pattern
+
+POST   /api/products/tenants/{id}/products/           - Create
+GET    /api/products/tenants/{id}/products/           - List
+GET    /api/products/tenants/{id}/products/{pid}/     - Get
+PATCH  /api/products/tenants/{id}/products/{pid}/     - Update
+DELETE /api/products/tenants/{id}/products/{pid}/     - Delete
+GET    /api/products/tenants/{id}/products/{pid}/urls/           - List URLs
+POST   /api/products/tenants/{id}/products/{pid}/urls/           - Add URL
+GET    /api/products/tenants/{id}/products/{pid}/urls/{uid}/prices/ - History
+POST   /api/products/tenants/{id}/products/{pid}/urls/{uid}/prices/ - Record
+
+Tuân Thủ Nguyên Tắc:
+✅ Architecture: Domain → Repositories → Infrastructure → Services → API
+✅ Multi-tenant: Tenant products (tenant schema), URLs & Prices (public schema)
+✅ Integration: Tương thích tenants, access modules
+✅ Async/Await: sync_to_async wrappers cho tất cả ORM calls
+✅ DDD Pattern: Domain entities, business logic, abstract repositories
+
+
