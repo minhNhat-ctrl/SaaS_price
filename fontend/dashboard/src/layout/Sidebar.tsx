@@ -28,6 +28,11 @@ const menuItems: MenuItem[] = [
     icon: "👥",
   },
   {
+    label: "Products",
+    path: "/products",
+    icon: "📦",
+  },
+  {
     label: "Profile",
     path: "/profile",
     icon: "👤",
@@ -35,7 +40,7 @@ const menuItems: MenuItem[] = [
   {
     label: "Catalog",
     path: "/catalog",
-    icon: "📦",
+    icon: "📚",
   },
 ];
 

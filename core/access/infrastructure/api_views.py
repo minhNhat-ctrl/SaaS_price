@@ -359,7 +359,10 @@ def activate_membership_view(request, membership_id):
     """POST /api/access/memberships/<membership_id>/activate/ → Kích hoạt membership"""
     try:
         service = _get_access_service()
-        membership = async_to_sync(service.activate_membership)(UUID(membership_id))
+        # membership_id is already UUID from URL converter
+        if not isinstance(membership_id, UUID):
+            membership_id = UUID(membership_id)
+        membership = async_to_sync(service.activate_membership)(membership_id)
         
         return JsonResponse({
             'success': True,
@@ -385,24 +388,59 @@ def activate_membership_view(request, membership_id):
 def revoke_membership_view(request, membership_id):
     """POST /api/access/memberships/<membership_id>/revoke/ → Thu hồi membership"""
     try:
+        logger.info(f"[REVOKE_MEMBERSHIP] Request for membership_id: {membership_id}")
         service = _get_access_service()
-        membership = async_to_sync(service.revoke_membership)(UUID(membership_id))
         
-        return JsonResponse({
-            'success': True,
-            'membership': _membership_to_dict(membership)
-        })
+        # membership_id is already UUID from URL converter, don't convert again
+        if not isinstance(membership_id, UUID):
+            membership_id = UUID(membership_id)
+        
+        # revoke_membership returns bool, not Membership object
+        success = async_to_sync(service.revoke_membership)(membership_id)
+        
+        if success:
+            logger.info(f"[REVOKE_MEMBERSHIP] Successfully revoked membership: {membership_id}")
+            return JsonResponse({
+                'success': True,
+                'message': 'Membership revoked successfully'
+            })
+        else:
+            logger.warning(f"[REVOKE_MEMBERSHIP] Failed to revoke membership: {membership_id}")
+            return JsonResponse({
+                'success': False,
+                'error': 'Failed to revoke membership'
+            }, status=500)
+        
+        if success:
+            logger.info(f"[REVOKE_MEMBERSHIP] Successfully revoked membership: {membership_id}")
+            return JsonResponse({
+                'success': True,
+                'message': 'Membership revoked successfully'
+            })
+        else:
+            logger.warning(f"[REVOKE_MEMBERSHIP] Failed to revoke membership: {membership_id}")
+            return JsonResponse({
+                'success': False,
+                'error': 'Failed to revoke membership'
+            }, status=500)
         
     except MembershipNotFoundError as e:
+        logger.error(f"[REVOKE_MEMBERSHIP] Membership not found: {membership_id}")
         return JsonResponse({
             'success': False,
             'error': str(e)
         }, status=404)
-    except Exception as e:
-        logger.error(f"Revoke membership error: {str(e)}")
+    except ValueError as e:
+        logger.error(f"[REVOKE_MEMBERSHIP] Invalid UUID: {membership_id}")
         return JsonResponse({
             'success': False,
-            'error': str(e)
+            'error': f'Invalid membership ID format: {str(e)}'
+        }, status=400)
+    except Exception as e:
+        logger.error(f"[REVOKE_MEMBERSHIP] Unexpected error: {str(e)}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': f'Internal error: {str(e)}'
         }, status=500)
 
 
@@ -427,8 +465,11 @@ def assign_roles_view(request, membership_id):
             }, status=400)
         
         service = _get_access_service()
+        # membership_id is already UUID from URL converter
+        if not isinstance(membership_id, UUID):
+            membership_id = UUID(membership_id)
         membership = async_to_sync(service.assign_roles_to_membership)(
-            membership_id=UUID(membership_id),
+            membership_id=membership_id,
             role_slugs=data['role_slugs']
         )
         

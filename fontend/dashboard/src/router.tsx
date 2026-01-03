@@ -8,6 +8,7 @@ import { ProfilePage } from "./pages/ProfilePage";
 import { CatalogPage } from "./modules/catalog/pages/CatalogPage";
 import { ProjectsPage } from "./modules/tenants/pages/ProjectsPage";
 import { MembersPage } from "./modules/access/pages/MembersPage";
+import { ProductsPage } from "./modules/products/pages/ProductsPage";
 
 /**
  * Router Configuration
@@ -58,6 +59,13 @@ export const routeRegistry: RouteConfig[] = [
     element: <MembersPage />,
     module: "access",
     label: "Members",
+    protected: true,
+  },
+  {
+    path: "/products",
+    element: <ProductsPage />,
+    module: "products",
+    label: "Products",
     protected: true,
   },
   {

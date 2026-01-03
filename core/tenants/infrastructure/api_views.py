@@ -147,12 +147,19 @@ def create_tenant_view(request):
     SECURITY: Tự động tạo membership với role "admin" cho user tạo tenant
     """
     try:
+        # Log request details for debugging
+        logger.info(f"[CREATE_TENANT] Request from user {request.user.id} ({request.user.username})")
+        logger.info(f"[CREATE_TENANT] Content-Type: {request.content_type}")
+        logger.info(f"[CREATE_TENANT] Body: {request.body.decode('utf-8')[:500]}")
+        
         data = _parse_json_body(request)
+        logger.info(f"[CREATE_TENANT] Parsed data: {data}")
         
         # Validate required fields
         required_fields = ['name', 'slug', 'domain']
         missing_fields = [f for f in required_fields if not data.get(f)]
         if missing_fields:
+            logger.warning(f"[CREATE_TENANT] Missing fields: {missing_fields}")
             return JsonResponse({
                 'success': False,
                 'error': f'Missing required fields: {", ".join(missing_fields)}'
@@ -216,12 +223,13 @@ def create_tenant_view(request):
             'error': str(e)
         }, status=400)
     except ValueError as e:
+        logger.error(f"[CREATE_TENANT] ValueError: {str(e)}")
         return JsonResponse({
             'success': False,
             'error': str(e)
         }, status=400)
     except Exception as e:
-        logger.error(f"Create tenant error: {str(e)}", exc_info=True)
+        logger.error(f"[CREATE_TENANT] Unexpected error: {str(e)}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': f'Internal error: {str(e)}'
