@@ -236,3 +236,44 @@ class SharedPriceHistory:
         """Ensure recorded_at is set."""
         if self.recorded_at is None:
             self.recorded_at = datetime.utcnow()
+
+
+# ============================================================
+# Tenant URL Tracking (Tenant Schema)
+# ============================================================
+
+@dataclass
+class TenantProductURLTracking:
+    """
+    Tenant Product URL Tracking - Tracks which tenants are monitoring which shared URLs.
+    
+    Lives in tenant schema. Enables many-to-many relationship between tenants and shared URLs.
+    Multiple tenants can track the same shared URL without duplication.
+    """
+    id: UUID
+    tenant_id: UUID
+    product_id: UUID  # TenantProduct ID
+    shared_url_id: UUID  # Reference to SharedProductURL in public schema
+    
+    # Optional tenant-specific metadata
+    custom_label: str = ""
+    is_primary: bool = False
+    
+    # Metadata
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    
+    def set_as_primary(self):
+        """Mark this URL as primary for the tenant's product."""
+        self.is_primary = True
+        self.updated_at = datetime.utcnow()
+    
+    def unset_as_primary(self):
+        """Unmark this URL as primary."""
+        self.is_primary = False
+        self.updated_at = datetime.utcnow()
+    
+    def update_label(self, label: str):
+        """Update custom label."""
+        self.custom_label = label
+        self.updated_at = datetime.utcnow()

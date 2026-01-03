@@ -37,6 +37,7 @@ from services.products.infrastructure.django_repository import (
     DjangoTenantProductRepository,
     DjangoSharedProductRepository,
     DjangoSharedProductURLRepository,
+    DjangoTenantProductURLTrackingRepository,
     DjangoSharedPriceHistoryRepository,
 )
 
@@ -62,6 +63,7 @@ def _get_product_service() -> ProductService:
         tenant_product_repo=DjangoTenantProductRepository(),
         shared_product_repo=DjangoSharedProductRepository(),
         product_url_repo=DjangoSharedProductURLRepository(),
+        url_tracking_repo=DjangoTenantProductURLTrackingRepository(),
         price_history_repo=DjangoSharedPriceHistoryRepository(),
     )
 
@@ -319,8 +321,6 @@ def _list_product_urls(request, tenant_id, product_id):
 def _add_product_url(request, tenant_id, product_id):
     """Add tracking URL to product"""
     try:
-        from services.products.domain.exceptions import DuplicateProductURLError
-        
         data = _parse_json_body(request)
         serializer = AddProductURLSerializer(data=data)
         if not serializer.is_valid():
@@ -336,15 +336,9 @@ def _add_product_url(request, tenant_id, product_id):
         return JsonResponse({
             'success': True,
             'url': _url_to_dict(product_url),
-            'message': 'URL added successfully'
+            'message': 'URL added successfully (shared URL reused if already exists)'
         }, status=201)
         
-    except DuplicateProductURLError as e:
-        return JsonResponse({
-            'success': False,
-            'error': 'Link đã tồn tại rồi',
-            'details': str(e)
-        }, status=409)
     except ValueError as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=400)
     except Exception as e:

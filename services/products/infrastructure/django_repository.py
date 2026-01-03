@@ -16,17 +16,20 @@ from services.products.domain import (
     SharedProduct,
     SharedProductURL,
     SharedPriceHistory,
+    TenantProductURLTracking,
 )
 from services.products.repositories.product_repo import (
     TenantProductRepository,
     SharedProductRepository,
     SharedProductURLRepository,
+    TenantProductURLTrackingRepository,
     SharedPriceHistoryRepository,
 )
 from services.products.infrastructure.django_models import (
     TenantProduct as TenantProductModel,
     SharedProduct as SharedProductModel,
     SharedProductURL as SharedProductURLModel,
+    TenantProductURLTracking as TenantProductURLTrackingModel,
     SharedPriceHistory as SharedPriceHistoryModel,
 )
 
@@ -579,3 +582,126 @@ class DjangoSharedPriceHistoryRepository(SharedPriceHistoryRepository):
                 }
         
         return await _trend()
+
+
+class DjangoTenantProductURLTrackingRepository(TenantProductURLTrackingRepository):
+    """Django ORM implementation - Tenant URL tracking in tenant schema"""
+    
+    def _set_tenant_schema(self, tenant_id: UUID):
+        """Set database connection to tenant schema"""
+        from django.db import connection
+        from core.tenants.infrastructure.django_models import Tenant
+        
+        try:
+            tenant = Tenant.objects.get(id=tenant_id)
+            connection.set_tenant(tenant)
+        except Tenant.DoesNotExist:
+            pass  # Will fail on query if tenant doesn't exist
+    
+    def _model_to_entity(self, model: TenantProductURLTrackingModel) -> TenantProductURLTracking:
+        """Convert Django model to domain entity"""
+        return TenantProductURLTracking(
+            id=model.id,
+            tenant_id=model.tenant_id,
+            product_id=model.product_id,
+            shared_url_id=model.shared_url_id,
+            custom_label=model.custom_label,
+            is_primary=model.is_primary,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+        )
+    
+    async def create(self, tracking: TenantProductURLTracking) -> TenantProductURLTracking:
+        """Create new URL tracking record"""
+        @sync_to_async
+        def _create():
+            self._set_tenant_schema(tracking.tenant_id)
+            model = TenantProductURLTrackingModel.objects.create(
+                id=tracking.id,
+                tenant_id=tracking.tenant_id,
+                product_id=tracking.product_id,
+                shared_url_id=tracking.shared_url_id,
+                custom_label=tracking.custom_label,
+                is_primary=tracking.is_primary,
+            )
+            return self._model_to_entity(model)
+        
+        return await _create()
+    
+    async def get_by_id(self, tracking_id: UUID, tenant_id: UUID) -> Optional[TenantProductURLTracking]:
+        """Get tracking by ID"""
+        @sync_to_async
+        def _get():
+            self._set_tenant_schema(tenant_id)
+            try:
+                model = TenantProductURLTrackingModel.objects.get(
+                    id=tracking_id,
+                    tenant_id=tenant_id
+                )
+                return self._model_to_entity(model)
+            except TenantProductURLTrackingModel.DoesNotExist:
+                return None
+        
+        return await _get()
+    
+    async def get_by_tenant_and_url(
+        self,
+        tenant_id: UUID,
+        shared_url_id: UUID
+    ) -> Optional[TenantProductURLTracking]:
+        """Get tracking by tenant and shared URL"""
+        @sync_to_async
+        def _get():
+            self._set_tenant_schema(tenant_id)
+            try:
+                model = TenantProductURLTrackingModel.objects.get(
+                    tenant_id=tenant_id,
+                    shared_url_id=shared_url_id
+                )
+                return self._model_to_entity(model)
+            except TenantProductURLTrackingModel.DoesNotExist:
+                return None
+        
+        return await _get()
+    
+    async def list_by_product(
+        self,
+        product_id: UUID,
+        tenant_id: UUID
+    ) -> List[TenantProductURLTracking]:
+        """List all URLs tracked by tenant product"""
+        @sync_to_async
+        def _list():
+            self._set_tenant_schema(tenant_id)
+            models = TenantProductURLTrackingModel.objects.filter(
+                product_id=product_id,
+                tenant_id=tenant_id
+            ).order_by('-is_primary', '-created_at')
+            return [self._model_to_entity(m) for m in models]
+        
+        return await _list()
+    
+    async def list_by_tenant(self, tenant_id: UUID) -> List[TenantProductURLTracking]:
+        """List all URLs tracked by tenant"""
+        @sync_to_async
+        def _list():
+            self._set_tenant_schema(tenant_id)
+            models = TenantProductURLTrackingModel.objects.filter(
+                tenant_id=tenant_id
+            ).order_by('-created_at')
+            return [self._model_to_entity(m) for m in models]
+        
+        return await _list()
+    
+    async def delete(self, tracking_id: UUID, tenant_id: UUID) -> bool:
+        """Delete tracking record"""
+        @sync_to_async
+        def _delete():
+            self._set_tenant_schema(tenant_id)
+            deleted_count, _ = TenantProductURLTrackingModel.objects.filter(
+                id=tracking_id,
+                tenant_id=tenant_id
+            ).delete()
+            return deleted_count > 0
+        
+        return await _delete()

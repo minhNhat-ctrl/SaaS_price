@@ -1,5 +1,6 @@
 # API Implementation Summary
-
+    user: testuser2@example.com
+    pass: testpass123
 ## Completed Work
 
 ### 1. Identity Module API (Authentication) ✅

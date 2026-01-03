@@ -4,6 +4,7 @@ from services.products.domain.entities import (
     SharedProduct,
     SharedProductURL,
     SharedPriceHistory,
+    TenantProductURLTracking,
     ProductStatus,
     MarketplaceType,
     PriceSource,
@@ -26,6 +27,7 @@ __all__ = [
     'SharedProduct',
     'SharedProductURL',
     'SharedPriceHistory',
+    'TenantProductURLTracking',
     # Enums
     'ProductStatus',
     'MarketplaceType',

@@ -76,6 +76,43 @@ class TenantProduct(models.Model):
         return f"{self.name} ({self.sku or self.id})"
 
 
+class TenantProductURLTracking(models.Model):
+    """
+    Tenant Product URL Tracking - Many-to-many relationship between tenants and shared URLs.
+    
+    Lives in tenant schema. Tracks which URLs each tenant is monitoring.
+    Multiple tenants can track the same shared URL without duplication.
+    """
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant_id = models.UUIDField(db_index=True, help_text="Tenant ID (logical reference)")
+    product_id = models.UUIDField(db_index=True, help_text="TenantProduct ID")
+    shared_url_id = models.UUIDField(db_index=True, help_text="Reference to SharedProductURL in public schema")
+    
+    # Optional tenant-specific metadata
+    custom_label = models.CharField(max_length=255, blank=True, help_text="Tenant's custom label for this URL")
+    is_primary = models.BooleanField(default=False, help_text="Primary URL for this tenant's product")
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'products_tenant_url_tracking'
+        indexes = [
+            models.Index(fields=['tenant_id', 'product_id']),
+            models.Index(fields=['tenant_id', 'shared_url_id']),
+            models.Index(fields=['product_id', 'is_primary']),
+        ]
+        unique_together = [('tenant_id', 'product_id', 'shared_url_id')]  # Prevent duplicate tracking
+        ordering = ['-created_at']
+        verbose_name = 'Tenant URL Tracking'
+        verbose_name_plural = 'Tenant URL Trackings'
+    
+    def __str__(self):
+        return f"Tenant {self.tenant_id} tracking URL {self.shared_url_id}"
+
+
 # ============================================================
 # Shared Models (Public Schema)
 # ============================================================
@@ -141,7 +178,7 @@ class SharedProductURL(models.Model):
     # URL Info
     domain = models.CharField(max_length=255, db_index=True)
     full_url = models.TextField(help_text="Full product URL")
-    # url_hash = models.CharField(max_length=64, unique=True, db_index=True, help_text="SHA256 hash of normalized URL for deduplication")  # Will add via migration
+    url_hash = models.CharField(max_length=64, unique=True, db_index=True, help_text="SHA256 hash of normalized URL for deduplication", null=True, blank=True)  # Added via migration 0005
     marketplace_type = models.CharField(max_length=50, choices=MARKETPLACE_CHOICES, default='CUSTOM', db_index=True)
     
     # Price info

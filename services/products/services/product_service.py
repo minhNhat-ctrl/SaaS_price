@@ -13,6 +13,7 @@ from services.products.domain import (
     SharedProduct,
     SharedProductURL,
     SharedPriceHistory,
+    TenantProductURLTracking,
     ProductStatus,
     MarketplaceType,
     PriceSource,
@@ -25,6 +26,7 @@ from services.products.repositories import (
     TenantProductRepository,
     SharedProductRepository,
     SharedProductURLRepository,
+    TenantProductURLTrackingRepository,
     SharedPriceHistoryRepository,
 )
 
@@ -45,11 +47,13 @@ class ProductService:
         tenant_product_repo: TenantProductRepository,
         shared_product_repo: SharedProductRepository,
         product_url_repo: SharedProductURLRepository,
+        url_tracking_repo: TenantProductURLTrackingRepository,
         price_history_repo: SharedPriceHistoryRepository,
     ):
         self.tenant_product_repo = tenant_product_repo
         self.shared_product_repo = shared_product_repo
         self.product_url_repo = product_url_repo
+        self.url_tracking_repo = url_tracking_repo
         self.price_history_repo = price_history_repo
     
     # ============================================================
@@ -274,44 +278,81 @@ class ProductService:
         **meta
     ) -> SharedProductURL:
         """
-        Add URL to product.
+        Add URL to product for tracking.
+        
+        Strategy: Shared URLs are reused across tenants. If URL already exists in shared schema,
+        we create a tracking record linking tenant's product to existing shared URL.
         
         Args:
-            product_id: Product ID
+            product_id: TenantProduct ID
             url: Full URL
             marketplace: Marketplace name (e.g., Amazon, eBay)
-            is_primary: Whether this is the primary URL
-            tenant_id: Tenant ID (for multi-tenant context)
+            is_primary: Whether this is the primary URL for this tenant's product
+            tenant_id: Tenant ID
             **meta: Additional metadata
         
         Returns:
-            Created product URL
-            
-        Raises:
-            DuplicateProductURLError: If URL already exists (when url_hash support is available)
+            Shared product URL (existing or newly created)
         """
         from uuid import uuid4
-        from services.products.domain.exceptions import DuplicateProductURLError
+        from services.products.infrastructure.django_models import SharedProductURL as SharedProductURLModel
         
-        # Check if URL already exists (case-sensitive check for now)
-        # Full case-insensitive duplicate prevention will be available once url_hash column is in public schema
-        existing = await self.product_url_repo.get_by_url(url)
-        if existing:
-            raise DuplicateProductURLError(url)
+        # Step 1: Check if URL already exists in shared schema
+        existing_url = await self.product_url_repo.get_by_url(url)
         
-        # Create product URL with simplified fields
+        if existing_url:
+            # URL exists - Check if tenant is already tracking it
+            tracking = await self.url_tracking_repo.get_by_tenant_and_url(
+                tenant_id=tenant_id,
+                shared_url_id=existing_url.id
+            )
+            
+            if tracking:
+                # Tenant already tracking this URL - just return existing URL
+                return existing_url
+            
+            # Create new tracking record (reuse existing shared URL)
+            new_tracking = TenantProductURLTracking(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                product_id=product_id,
+                shared_url_id=existing_url.id,
+                custom_label=meta.get('label', ''),
+                is_primary=is_primary,
+            )
+            await self.url_tracking_repo.create(new_tracking)
+            
+            return existing_url
+        
+        # Step 2: URL doesn't exist - Create new shared URL
+        url_hash = SharedProductURLModel.hash_url(url) if url else None
+        
         product_url = SharedProductURL(
             id=uuid4(),
-            product_id=product_id,
+            product_id=product_id,  # Can be any product_id as reference
             domain=marketplace or "unknown",
             full_url=url,
-            marketplace_type=marketplace or "other",
+            url_hash=url_hash,
+            marketplace_type=marketplace or "CUSTOM",
             currency="USD",
-            is_active=not is_primary,  # Map is_primary to is_active
+            is_active=True,
             meta=meta,
         )
         
-        return await self.product_url_repo.create(product_url)
+        created_url = await self.product_url_repo.create(product_url)
+        
+        # Step 3: Create tracking record for new URL
+        new_tracking = TenantProductURLTracking(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            product_id=product_id,
+            shared_url_id=created_url.id,
+            custom_label=meta.get('label', ''),
+            is_primary=is_primary,
+        )
+        await self.url_tracking_repo.create(new_tracking)
+        
+        return created_url
     
     async def get_product_urls(
         self,

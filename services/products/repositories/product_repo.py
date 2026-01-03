@@ -168,6 +168,52 @@ class SharedProductURLRepository(ABC):
 
 
 # ============================================================
+# Tenant URL Tracking Repository (Tenant Schema)
+# ============================================================
+
+class TenantProductURLTrackingRepository(ABC):
+    """Repository for tenant URL tracking data."""
+    
+    @abstractmethod
+    async def create(self, tracking: 'TenantProductURLTracking') -> 'TenantProductURLTracking':
+        """Create a new tracking record."""
+        pass
+    
+    @abstractmethod
+    async def get_by_id(self, tracking_id: UUID, tenant_id: UUID) -> Optional['TenantProductURLTracking']:
+        """Get tracking record by ID."""
+        pass
+    
+    @abstractmethod
+    async def get_by_tenant_and_url(
+        self,
+        tenant_id: UUID,
+        shared_url_id: UUID
+    ) -> Optional['TenantProductURLTracking']:
+        """Get tracking record by tenant and shared URL."""
+        pass
+    
+    @abstractmethod
+    async def list_by_product(
+        self,
+        product_id: UUID,
+        tenant_id: UUID
+    ) -> List['TenantProductURLTracking']:
+        """List all URLs tracked by a tenant product."""
+        pass
+    
+    @abstractmethod
+    async def list_by_tenant(self, tenant_id: UUID) -> List['TenantProductURLTracking']:
+        """List all URLs tracked by a tenant."""
+        pass
+    
+    @abstractmethod
+    async def delete(self, tracking_id: UUID, tenant_id: UUID) -> bool:
+        """Delete tracking record."""
+        pass
+
+
+# ============================================================
 # Price History Repository (Public Schema)
 # ============================================================
 
