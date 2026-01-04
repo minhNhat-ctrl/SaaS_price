@@ -59,10 +59,36 @@ class AdminSecurityMiddleware(MiddlewareMixin):
         return response
 
     def _is_admin_path(self, request) -> bool:
-        """Kiểm tra request có phải tới admin không"""
+        """
+        Kiểm tra request có phải tới admin không.
+        
+        ❗ IMPORTANT: Phải exclude login/logout/static để tránh redirect loop!
+        """
         path = request.path
+        
         # Pattern: /admin/{hash}/ hoặc /admin/
-        return path.startswith('/admin/')
+        if not path.startswith('/admin/'):
+            return False
+        
+        # ✅ ALLOW these paths without hash validation (avoid redirect loop)
+        excluded_paths = [
+            '/admin/login/',
+            '/admin/logout/',
+            '/admin/jsi18n/',  # Django i18n JS
+            '/admin/static/',   # Static files
+        ]
+        
+        for excluded in excluded_paths:
+            if excluded in path:
+                return False
+        
+        # Also check for hash-based admin paths like /admin/secure-admin-2025/login/
+        # Extract pattern: /admin/{hash}/login/ → should be allowed
+        import re
+        if re.match(r'^/admin/[^/]+/(login|logout|jsi18n)', path):
+            return False
+        
+        return True
 
     def _validate_admin_hash(self, request) -> bool:
         """

@@ -357,19 +357,56 @@ class ProductService:
     async def get_product_urls(
         self,
         product_id: UUID,
+        tenant_id: UUID,
         is_active: Optional[bool] = None
     ) -> List[SharedProductURL]:
-        """Get all URLs for shared product."""
-        return await self.product_url_repo.list_by_product(product_id, is_active)
+        """
+        Get all URLs for tenant's product (via tracking).
+        
+        ❗ IMPORTANT: Must query via TenantProductURLTracking, 
+        not directly from SharedProductURL.product_id
+        
+        Args:
+            product_id: TenantProduct ID
+            tenant_id: Tenant ID
+            is_active: Filter by active status
+            
+        Returns:
+            List of shared URLs that this tenant's product is tracking
+        """
+        # Step 1: Get all tracking records for this product
+        trackings = await self.url_tracking_repo.list_by_product(
+            product_id=product_id,
+            tenant_id=tenant_id
+        )
+        
+        if not trackings:
+            return []
+        
+        # Step 2: Get SharedProductURL for each tracked URL
+        shared_url_ids = [t.shared_url_id for t in trackings]
+        urls = []
+        
+        for url_id in shared_url_ids:
+            url = await self.product_url_repo.get_by_id(url_id)
+            if url:
+                if is_active is None or url.is_active == is_active:
+                    urls.append(url)
+        
+        return urls
     
     async def list_product_urls(
         self,
         product_id: UUID,
-        tenant_id: Optional[UUID] = None,
+        tenant_id: UUID,
         **kwargs
     ) -> List[SharedProductURL]:
-        """List all URLs for product (tenant_id is optional for API)."""
-        return await self.get_product_urls(product_id)
+        """
+        List all URLs for tenant's product.
+        
+        ❗ tenant_id is REQUIRED - must query via tracking table.
+        """
+        return await self.get_product_urls(product_id, tenant_id)
     
     async def deactivate_product_url(self, url_id: UUID) -> SharedProductURL:
         """Deactivate product URL."""
