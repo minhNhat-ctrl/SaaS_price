@@ -66,16 +66,14 @@ class UpdateProductSerializer(serializers.Serializer):
 
 
 class AddProductURLSerializer(serializers.Serializer):
-    """Add product URL request serializer"""
+    """Add product URL request serializer - URL only, domain/marketplace auto-detected"""
     url = serializers.CharField(max_length=2048)
-    marketplace = serializers.CharField(max_length=255, required=False, allow_blank=True)
     is_primary = serializers.BooleanField(default=False)
 
 
 class UpdateProductURLSerializer(serializers.Serializer):
-    """Update product URL request serializer"""
+    """Update product URL request serializer - URL only, domain/marketplace auto-detected"""
     url = serializers.CharField(max_length=2048, required=False)
-    marketplace = serializers.CharField(max_length=255, required=False, allow_blank=True)
     is_primary = serializers.BooleanField(required=False)
 
 

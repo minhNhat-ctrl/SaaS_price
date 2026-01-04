@@ -103,7 +103,8 @@ def _url_to_dict(url):
         'id': str(url.id),
         'product_id': str(url.product_id),
         'url': url.full_url,
-        'marketplace': url.marketplace_type,
+        'domain': url.domain,  # Auto-detected domain
+        'marketplace': url.marketplace_type,  # Auto-detected marketplace
         'is_primary': url.is_active,
         'created_at': url.created_at.isoformat() if url.created_at else None,
     }

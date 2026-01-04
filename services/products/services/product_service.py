@@ -7,6 +7,7 @@ No Django dependencies - pure business logic.
 from typing import Optional, List, Dict, Any
 from uuid import UUID, uuid4
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
 from services.products.domain import (
     TenantProduct,
@@ -29,6 +30,54 @@ from services.products.repositories import (
     TenantProductURLTrackingRepository,
     SharedPriceHistoryRepository,
 )
+
+
+def extract_domain_from_url(url: str) -> str:
+    """
+    Auto-extract domain from URL.
+    
+    Examples:
+        https://www.amazon.com/product/123 -> amazon.com
+        https://rakuten.co.jp/shop/item -> rakuten.co.jp
+        https://shopee.vn/product-i.123 -> shopee.vn
+    """
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        # Remove www. prefix if present
+        if domain.startswith('www.'):
+            domain = domain[4:]
+        return domain if domain else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def detect_marketplace_type(domain: str) -> str:
+    """
+    Auto-detect marketplace type from domain.
+    
+    Returns marketplace type constant (AMAZON, RAKUTEN, SHOPEE, LAZADA, etc.)
+    """
+    domain_lower = domain.lower()
+    
+    # Amazon domains (amazon.com, amazon.co.jp, amazon.vn, etc.)
+    if 'amazon' in domain_lower:
+        return 'AMAZON'
+    
+    # Rakuten domains (rakuten.co.jp, rakuten.com, etc.)
+    if 'rakuten' in domain_lower:
+        return 'RAKUTEN'
+    
+    # Shopee domains (shopee.vn, shopee.sg, shopee.co.th, etc.)
+    if 'shopee' in domain_lower:
+        return 'SHOPEE'
+    
+    # Lazada domains (lazada.vn, lazada.sg, lazada.co.th, etc.)
+    if 'lazada' in domain_lower:
+        return 'LAZADA'
+    
+    # Default to CUSTOM for unknown domains
+    return 'CUSTOM'
 
 
 class ProductService:
@@ -327,13 +376,17 @@ class ProductService:
         # Step 2: URL doesn't exist - Create new shared URL
         url_hash = SharedProductURLModel.hash_url(url) if url else None
         
+        # Auto-detect domain and marketplace type from URL
+        detected_domain = extract_domain_from_url(url)
+        detected_marketplace = detect_marketplace_type(detected_domain)
+        
         product_url = SharedProductURL(
             id=uuid4(),
             product_id=product_id,  # Can be any product_id as reference
-            domain=marketplace or "unknown",
+            domain=detected_domain,  # Auto-detected from URL
             full_url=url,
             url_hash=url_hash,
-            marketplace_type=marketplace or "CUSTOM",
+            marketplace_type=detected_marketplace,  # Auto-detected from domain
             currency="USD",
             is_active=True,
             meta=meta,
