@@ -4,7 +4,7 @@ import { Header } from "./Header";
 /**
  * MainLayout Component
  * Layout cố định, không re-render khi đổi page
- * Sidebar + Header + Content area
+ * Mobile-first responsive: stacked mobile, sidebar left desktop
  */
 
 interface MainLayoutProps {
@@ -13,35 +13,19 @@ interface MainLayoutProps {
 
 export function MainLayout({ children }: MainLayoutProps) {
   return (
-    <div
-      className="main-layout"
-      style={{
-        display: "flex",
-        minHeight: "100vh",
-        backgroundColor: "#f8f9fa",
-      }}
-    >
-      <Sidebar />
+    <div className="d-flex flex-column" style={{ minHeight: "100vh", backgroundColor: "#f8f9fa" }}>
+      {/* Sidebar - fixed desktop, collapsible mobile */}
+      <div className="position-fixed top-0 start-0" style={{ height: "100vh", zIndex: 1000, width: "250px" }}>
+        <Sidebar />
+      </div>
 
-      <div
-        className="content-wrapper"
-        style={{
-          marginLeft: "250px",
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
+      {/* Content wrapper */}
+      <div className="flex-grow-1" style={{ marginLeft: "250px" }}>
+        {/* Header */}
         <Header />
 
-        <main
-          className="content"
-          style={{
-            flex: 1,
-            padding: "20px",
-            overflowY: "auto",
-          }}
-        >
+        {/* Main content */}
+        <main className="p-3 p-lg-4" style={{ overflowY: "auto" }}>
           {children}
         </main>
       </div>

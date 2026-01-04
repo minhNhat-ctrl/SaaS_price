@@ -66,6 +66,7 @@ export function MembersPage() {
     if (selectedTenantId) {
       loadMembers();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTenantId]);
 
   const handleActivate = async (id: string) => {

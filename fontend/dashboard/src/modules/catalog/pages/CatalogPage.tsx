@@ -8,7 +8,7 @@ import { ProductTable } from "../components/ProductTable";
  * Nguyên tắc:
  * - Page gọi API (không Layout)
  * - Fetch data khi component mount
- * - Tách widget nhỏ (ProductTable)
+ * - Responsive layout, inline CRUD
  */
 
 export function CatalogPage() {
@@ -35,38 +35,48 @@ export function CatalogPage() {
   }, []);
 
   if (loading) {
-    return <div className="alert alert-info">Loading products...</div>;
+    return (
+      <div className="d-flex justify-content-center align-items-center py-5">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Loading products...</span>
+        </div>
+      </div>
+    );
   }
 
   if (error) {
-    return <div className="alert alert-danger">{error}</div>;
+    return (
+      <div className="alert alert-danger alert-dismissible fade show">
+        {error}
+        <button
+          type="button"
+          className="btn-close"
+          onClick={() => setError(null)}
+        />
+      </div>
+    );
   }
 
   return (
     <div className="catalog-page">
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "20px",
-        }}
-      >
-        <h1>Catalog</h1>
-        <button
-          className="btn btn-primary"
-          style={{ borderRadius: "4px" }}
-          disabled
-          title="Coming soon"
-        >
-          + Add Product
-        </button>
+      {/* Page Header */}
+      <div className="mb-4">
+        <h1 className="h3 fw-bold mb-1">Catalog</h1>
+        <p className="text-muted small mb-0">Browse all available products</p>
       </div>
 
+      {/* Products Table */}
       {products.length === 0 ? (
-        <div className="alert alert-warning">No products found</div>
+        <div className="alert alert-info">No products available in catalog</div>
       ) : (
-        <ProductTable products={products} />
+        <div className="card border-0 shadow-sm">
+          <div className="card-body p-3 p-md-4">
+            <p className="text-muted small mb-3">
+              {products.length} product{products.length !== 1 ? "s" : ""} in catalog
+            </p>
+            <ProductTable products={products} />
+          </div>
+        </div>
       )}
     </div>
   );

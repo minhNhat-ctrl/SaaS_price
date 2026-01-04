@@ -42,6 +42,7 @@ export function ProjectsPage() {
 
   useEffect(() => {
     loadProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]); // Reload when filter changes
 
   const handleCreate = async () => {

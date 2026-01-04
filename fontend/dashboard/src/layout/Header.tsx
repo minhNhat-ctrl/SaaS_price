@@ -1,56 +1,74 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../shared/AuthContext";
 
 /**
  * Header Component
- * Hiển thị thông tin user, controls
+ * Responsive header: mobile collapsible, desktop full info
+ * Hiển thị user, breadcrumb, tenant
  */
 
 export function Header() {
   const { user, logout } = useAuth();
+  const location = useLocation();
 
   const handleLogout = async () => {
     try {
       await logout();
-      window.location.href = '/login';
+      window.location.href = "/login";
     } catch (error) {
-      console.error('Logout failed:', error);
+      console.error("Logout failed:", error);
     }
   };
 
-  return (
-    <header
-      className="header"
-      style={{
-        borderBottom: "1px solid #e5e5e5",
-        padding: "15px 20px",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        backgroundColor: "#fff",
-      }}
-    >
-      <div>
-        <h5 className="mb-0">PriceSync Dashboard</h5>
-      </div>
+  // Simple breadcrumb logic
+  const getBreadcrumb = () => {
+    const pathMap: Record<string, string> = {
+      "/": "Dashboard",
+      "/catalog": "Catalog",
+      "/products": "Products",
+      "/profile": "Profile",
+    };
+    return pathMap[location.pathname] || "Page";
+  };
 
-      <div style={{ display: "flex", gap: "15px", alignItems: "center" }}>
-        <Link 
-          to="/profile" 
-          className="text-decoration-none"
-          style={{ fontSize: "14px" }}
-        >
-          <i className="bi bi-person-circle me-1"></i>
-          {user?.email}
-        </Link>
-        <button
-          className="btn btn-sm btn-outline-danger"
-          onClick={handleLogout}
-          style={{ borderRadius: "4px" }}
-        >
-          <i className="bi bi-box-arrow-right me-1"></i>
-          Logout
-        </button>
+  return (
+    <header className="bg-white border-bottom sticky-top">
+      <div className="d-flex justify-content-between align-items-center p-3 p-lg-4">
+        {/* Breadcrumb */}
+        <div className="flex-grow-1">
+          <nav aria-label="breadcrumb">
+            <ol className="breadcrumb mb-0 small">
+              <li className="breadcrumb-item">
+                <Link to="/" className="text-decoration-none">
+                  Dashboard
+                </Link>
+              </li>
+              {location.pathname !== "/" && (
+                <li className="breadcrumb-item active" aria-current="page">
+                  {getBreadcrumb()}
+                </li>
+              )}
+            </ol>
+          </nav>
+        </div>
+
+        {/* User Info & Actions - Responsive */}
+        <div className="d-flex align-items-center gap-2 gap-md-3">
+          {/* User email - hide on mobile */}
+          <div className="d-none d-md-block small text-muted">
+            {user?.email}
+          </div>
+
+          {/* Logout button */}
+          <button
+            className="btn btn-sm btn-outline-danger"
+            onClick={handleLogout}
+            title="Logout"
+          >
+            <span className="d-none d-sm-inline">Logout</span>
+            <span className="d-inline d-sm-none">↪️</span>
+          </button>
+        </div>
       </div>
     </header>
   );

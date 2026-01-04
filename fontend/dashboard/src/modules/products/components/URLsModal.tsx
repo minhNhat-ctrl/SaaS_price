@@ -54,6 +54,7 @@ export function URLsModal({
     if (show && productId && tenantId) {
       loadURLs();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [show, productId, tenantId]);
 
   const loadURLs = async () => {

@@ -18,7 +18,8 @@ import { URLsModal } from "../components/URLsModal";
  * - Page gọi API (không Layout)
  * - Fetch data khi component mount
  * - Tách widget nhỏ (ProductTable, ProductForm)
- * - Cho phép chọn project (tenant)
+ * - Radio button thay dropdown cho tenant selector
+ * - Responsive layout
  */
 
 export function ProductsPage() {
@@ -75,6 +76,7 @@ export function ProductsPage() {
 
   useEffect(() => {
     loadProducts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTenantId]); // Reload when tenant changes
 
   const handleCreate = async (formData: CreateProductPayload) => {
@@ -87,6 +89,7 @@ export function ProductsPage() {
       setFormLoading(true);
       const created = await createProduct(selectedTenantId, formData);
       setProducts((prev) => [...prev, created]);
+      setShowForm(false);
     } finally {
       setFormLoading(false);
     }
@@ -108,6 +111,7 @@ export function ProductsPage() {
         prev.map((p) => (p.id === editingProduct.id ? updated : p))
       );
       setEditingProduct(null);
+      setShowForm(false);
     } finally {
       setFormLoading(false);
     }
@@ -139,8 +143,12 @@ export function ProductsPage() {
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <h1>Products</h1>
+      {/* Page Header */}
+      <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-md-items-center gap-3 mb-4">
+        <div>
+          <h1 className="h3 fw-bold mb-1">Products</h1>
+          <p className="text-muted small mb-0">Manage all products for selected project</p>
+        </div>
         <button
           className="btn btn-primary"
           onClick={() => {
@@ -152,23 +160,33 @@ export function ProductsPage() {
         </button>
       </div>
 
-      {/* Project Selector */}
-      <div className="mb-4">
-        <label className="form-label">Select Project</label>
-        <select
-          className="form-select"
-          value={selectedTenantId}
-          onChange={(e) => setSelectedTenantId(e.target.value)}
-        >
-          <option value="">-- Choose a project --</option>
-          {tenants.map((tenant) => (
-            <option key={tenant.id} value={tenant.id}>
-              {tenant.name}
-            </option>
-          ))}
-        </select>
+      {/* Project Selector - Visible tabs instead of dropdown */}
+      <div className="card border-0 shadow-sm mb-4">
+        <div className="card-body p-3 p-md-4">
+          <h6 className="card-title fw-bold mb-3">📁 Select Project</h6>
+          {tenants.length === 0 ? (
+            <div className="alert alert-info mb-0">No projects available</div>
+          ) : (
+            <div className="d-flex flex-wrap gap-2">
+              {tenants.map((tenant) => (
+                <button
+                  key={tenant.id}
+                  className={`btn btn-sm ${
+                    selectedTenantId === tenant.id
+                      ? "btn-primary"
+                      : "btn-outline-secondary"
+                  }`}
+                  onClick={() => setSelectedTenantId(tenant.id)}
+                >
+                  {tenant.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
+      {/* Error Alert */}
       {error && (
         <div className="alert alert-danger alert-dismissible fade show">
           {error}
@@ -180,15 +198,22 @@ export function ProductsPage() {
         </div>
       )}
 
+      {/* Loading State */}
       {loading ? (
-        <div className="text-center py-5">
-          <div className="spinner-border" role="status">
+        <div className="d-flex justify-content-center align-items-center py-5">
+          <div className="spinner-border text-primary" role="status">
             <span className="visually-hidden">Loading products...</span>
           </div>
         </div>
       ) : (
+        /* Products Table */
         <div className="card border-0 shadow-sm">
-          <div className="card-body">
+          <div className="card-body p-3 p-md-4">
+            {products.length > 0 && (
+              <h6 className="text-muted small mb-3">
+                {products.length} product{products.length !== 1 ? "s" : ""}
+              </h6>
+            )}
             <ProductTable
               products={products}
               onEdit={handleEdit}
@@ -200,6 +225,7 @@ export function ProductsPage() {
         </div>
       )}
 
+      {/* Product Form Modal */}
       <ProductForm
         show={showForm}
         onClose={() => {
@@ -212,6 +238,7 @@ export function ProductsPage() {
         isEdit={!!editingProduct}
       />
 
+      {/* URLs Modal */}
       {selectedProductForURLs && (
         <URLsModal
           show={showURLsModal}
