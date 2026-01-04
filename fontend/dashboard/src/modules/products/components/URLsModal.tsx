@@ -141,6 +141,7 @@ export function URLsModal({
       marketplace: url.marketplace || "",
       is_primary: url.is_primary,
     });
+    setShowAddForm(true); // Open form when editing
   };
 
   const handleUpdateURL = async () => {
@@ -242,6 +243,9 @@ export function URLsModal({
                   }}
                   className="mb-3 p-3 bg-light border rounded"
                 >
+                  <h6 className="mb-3">
+                    {editingUrlId ? "✏️ Edit URL" : "➕ Add New URL"}
+                  </h6>
                   <div className="mb-3">
                     <label className="form-label">URL *</label>
                     <input

@@ -28,6 +28,19 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['dj.2kvietnam.com', 'app.2kvietnam.com', 'localhost', '127.0.0.1', 'testserver']
 
+# CSRF Configuration - Trusted Origins for Cross-Domain Requests
+CSRF_TRUSTED_ORIGINS = [
+    'http://dj.2kvietnam.com',
+    'https://dj.2kvietnam.com',
+    'http://localhost:8005',
+    'http://127.0.0.1:8005',
+]
+
+# Session Configuration
+SESSION_COOKIE_SECURE = False  # Set True for HTTPS
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_SECURE = False    # Set True for HTTPS
+CSRF_COOKIE_HTTPONLY = True
 
 # Application definition
 

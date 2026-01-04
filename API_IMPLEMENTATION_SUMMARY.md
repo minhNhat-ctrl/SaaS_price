@@ -215,15 +215,20 @@
   - Response: `{"success": true, "urls": [...]}`
 
 - `POST /api/products/tenants/<tenant_id>/products/<product_id>/urls/` - Add URL
-  - Body: `{"url": "https://example.com/product", "source": "amazon"}`
+  - Body: `{"url": "https://example.com/product", "marketplace": "amazon", "is_primary": false}`
   - Response: `{"success": true, "url": {...}}`
 
 - `GET /api/products/tenants/<tenant_id>/products/<product_id>/urls/<url_id>/` - Get URL
   - Response: `{"success": true, "url": {...}}`
 
-- `PATCH /api/products/tenants/<tenant_id>/products/<product_id>/urls/<url_id>/` - Update URL
-  - Body: `{"source": "ebay", "notes": "..."}`
-  - Response: `{"success": true, "url": {...}}`
+- `PATCH /api/products/tenants/<tenant_id>/products/<product_id>/urls/<url_id>/` - **Update URL** ✅
+  - Body: `{"url": "https://new-url.com", "marketplace": "ebay", "is_primary": true}`
+  - Response: `{"success": true, "url": {...}, "message": "URL updated successfully"}`
+  - **Implementation:**
+    - Service: `ProductService.update_product_url()`
+    - View: `product_url_detail_view()` → `_update_product_url()`
+    - Serializer: `UpdateProductURLSerializer`
+    - All fields optional: `url`, `marketplace`, `is_primary`
 
 - `DELETE /api/products/tenants/<tenant_id>/products/<product_id>/urls/<url_id>/` - Delete URL
   - Response: `{"success": true, "message": "URL deleted"}`
@@ -608,19 +613,27 @@ python3.9 manage.py shell < test_tenant_api_client.py
   - GET /api/products/tenants/<tid>/products/ - 200 OK
   - PATCH /api/products/tenants/<tid>/products/<pid>/ - 200 OK
   - DELETE /api/products/tenants/<tid>/products/<pid>/ - 200 OK
+  
+✓ Product URLs API (Edit/Update fully implemented)
+  - GET /api/products/tenants/<tid>/products/<pid>/urls/ - 200 OK
+  - POST /api/products/tenants/<tid>/products/<pid>/urls/ - 201 Created
+  - GET /api/products/tenants/<tid>/products/<pid>/urls/<uid>/ - 200 OK
+  - **PATCH /api/products/tenants/<tid>/products/<pid>/urls/<uid>/ - 200 OK** ✅
+  - DELETE /api/products/tenants/<tid>/products/<pid>/urls/<uid>/ - 200 OK
 ```
 
 ---
 
-**Last Updated:** 2026-01-03  
+**Last Updated:** 2026-01-04  
 **Architecture Status:** STABLE ✅  
 **API Version:** 1.0.0
 
 **Summary:**
 - ✅ 5 modules fully functional (Identity, Accounts, Tenants, Access, Products)
-- ✅ 40+ API endpoints implemented
+- ✅ 45+ API endpoints implemented
 - ✅ Multi-tenant architecture working
 - ✅ Session-based authentication
+- ✅ Product URL edit/update fully implemented (backend + frontend)
 - ✅ Auto-create admin membership on tenant creation
 - ✅ Schema-per-tenant isolation
 - ✅ Gunicorn stable on port 8005

@@ -147,22 +147,20 @@ export function ProductForm({
                 </div>
               </div>
 
-              {isEdit && (
-                <div className="mb-3">
-                  <label className="form-label">Status</label>
-                  <select
-                    className="form-select"
-                    value={formData.status || "active"}
-                    onChange={(e) =>
-                      setFormData({ ...formData, status: e.target.value })
-                    }
-                    disabled={loading}
-                  >
-                    <option value="active">Active</option>
-                    <option value="inactive">Inactive</option>
-                  </select>
-                </div>
-              )}
+              <div className="mb-3">
+                <label className="form-label">Status</label>
+                <select
+                  className="form-select"
+                  value={formData.status || "active"}
+                  onChange={(e) =>
+                    setFormData({ ...formData, status: e.target.value })
+                  }
+                  disabled={loading}
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              </div>
             </div>
 
             <div className="modal-footer">
