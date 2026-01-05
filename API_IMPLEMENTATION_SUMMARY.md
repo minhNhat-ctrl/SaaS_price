@@ -183,163 +183,151 @@
 
 ---
 
-### 5. Products Module API ✅
+### 5. Products Module API ✅ (Refactored 2026-01-05)
 
-### 5. Products Module API ✅
+**Architecture:** Split into two apps for proper multi-tenant data separation
 
-**Location:** `services/products/api/views.py`
+**Locations:**
+- `services/products/` - Tenant data (Product, ProductURLMapping) 
+- `services/products_shared/` - Shared data (Domain, ProductURL, PriceHistory)
 
-**Endpoints:**
+**Key Design Decisions:**
+- Tenant data (Product, ProductURLMapping) lives in TENANT schema
+- Shared data (Domain, ProductURL, PriceHistory) lives in PUBLIC schema  
+- Cross-schema reference via `url_hash` (SHA-256 string) instead of FK
+- Reference counting in ProductURL for automatic orphan cleanup
 
-#### Product Management
-- `GET /api/products/tenants/<tenant_id>/products/` - List products
-  - Query params: `?status=active&search=keyword`
-  - Response: `{"success": true, "products": [...]}`
+---
 
-- `POST /api/products/tenants/<tenant_id>/products/` - Create product
-  - Body: `{"name": "Product Name", "sku": "SKU-001", "description": "..."}`
-  - Response: `{"success": true, "product": {...}, "message": "Product created"}`
+#### Product CRUD Endpoints
 
-- `GET /api/products/tenants/<tenant_id>/products/<product_id>/` - Get product
-  - Response: `{"success": true, "product": {...}}`
+**Base URL:** `/api/products/`
 
-- `PATCH /api/products/tenants/<tenant_id>/products/<product_id>/` - Update product
-  - Body: `{"name": "New Name", "description": "..."}`
-  - Response: `{"success": true, "product": {...}}`
+- `POST /api/products/?tenant_id=<uuid>` - Create product
+  - Body: `{"name": "Product Name", "sku": "SKU-001", "gtin": "...", "status": "ACTIVE"}`
+  - Response: `{"success": true, "data": {...}}`
+  - Status values: `ACTIVE`, `ARCHIVED`, `DRAFT`, `DISCONTINUED`
 
-- `DELETE /api/products/tenants/<tenant_id>/products/<product_id>/` - Delete product
-  - Response: `{"success": true, "message": "Product deleted"}`
+- `GET /api/products/?tenant_id=<uuid>` - List products
+  - Query params: `?status=ACTIVE&limit=100&offset=0`
+  - Response: `{"success": true, "data": [...], "count": 10}`
 
-#### Product URL Management (Tracking Links)
-- `GET /api/products/tenants/<tenant_id>/products/<product_id>/urls/` - List URLs
-  - Response: `{"success": true, "urls": [...]}`
+- `GET /api/products/<product_id>/?tenant_id=<uuid>` - Get product details
+  - Response: `{"success": true, "data": {...}}`
 
-- `POST /api/products/tenants/<tenant_id>/products/<product_id>/urls/` - Add URL
-  - Body: `{"url": "https://example.com/product", "marketplace": "amazon", "is_primary": false}`
-  - Response: `{"success": true, "url": {...}}`
+- `PATCH /api/products/<product_id>/?tenant_id=<uuid>` - Update product
+  - Body: `{"name": "New Name", "status": "DRAFT"}`
+  - Response: `{"success": true, "data": {...}}`
 
-- `GET /api/products/tenants/<tenant_id>/products/<product_id>/urls/<url_id>/` - Get URL
-  - Response: `{"success": true, "url": {...}}`
+- `DELETE /api/products/<product_id>/?tenant_id=<uuid>` - Delete product
+  - Response: `{"success": true, "message": "Product deleted successfully"}`
+  - Note: Also cleans up URL mappings and decrements reference counts
 
-- `PATCH /api/products/tenants/<tenant_id>/products/<product_id>/urls/<url_id>/` - **Update URL** ✅
-  - Body: `{"url": "https://new-url.com", "marketplace": "ebay", "is_primary": true}`
-  - Response: `{"success": true, "url": {...}, "message": "URL updated successfully"}`
-  - **Implementation:**
-    - Service: `ProductService.update_product_url()`
-    - View: `product_url_detail_view()` → `_update_product_url()`
-    - Serializer: `UpdateProductURLSerializer`
-    - All fields optional: `url`, `marketplace`, `is_primary`
+---
 
-- `DELETE /api/products/tenants/<tenant_id>/products/<product_id>/urls/<url_id>/` - Delete URL
-  - Response: `{"success": true, "message": "URL deleted"}`
+#### Product URL Management Endpoints
 
-#### Price History Tracking
-- `GET /api/products/tenants/<tenant_id>/products/<product_id>/urls/<url_id>/prices/` - Get price history
-  - Response: `{"success": true, "prices": [...], "analytics": {...}}`
+- `POST /api/products/<product_id>/urls/?tenant_id=<uuid>` - Add URL to product
+  - Body: `{"raw_url": "https://amazon.co.jp/dp/ABC123", "custom_label": "Amazon JP", "is_primary": false}`
+  - Response: `{"success": true, "data": {"mapping": {...}, "url": {...}}}`
+  - Features:
+    - Auto-extracts domain from URL
+    - Creates/reuses Domain entity in public schema
+    - Deduplicates URLs by hash (same URL = same hash across tenants)
+    - Increments reference_count in shared ProductURL
+    - Prevents duplicate URL mapping per tenant
 
-- `POST /api/products/tenants/<tenant_id>/products/<product_id>/urls/<url_id>/prices/` - Record price
-  - Body: `{"price": 99.99, "currency": "USD", "available": true}`
-  - Response: `{"success": true, "price": {...}}`
+- `GET /api/products/<product_id>/urls/?tenant_id=<uuid>` - List product URLs
+  - Response: `{"success": true, "data": [{"mapping": {...}, "url": {...}}, ...]}`
+  - Returns combined tenant mapping + shared URL info
 
-**Features:**
-- Multi-tenant product isolation (products in tenant schema)
-- Shared URL tracking (URLs in public schema)
-- Price history with analytics
-- Duplicate URL detection (via hash)
-- Search and filter capabilities
-- Currency support
+- `DELETE /api/products/<product_id>/urls/<url_hash>/?tenant_id=<uuid>` - Remove URL
+  - Response: `{"success": true, "message": "URL removed from product successfully"}`
+  - Note: Decrements reference_count; orphaned URLs can be cleaned up later
 
-**Product Object:**
+---
+
+#### Price History Endpoints
+
+- `GET /api/products/<product_id>/prices/?tenant_id=<uuid>` - Get price history
+  - Query params: `?url_hash=<hash>&limit=100`
+  - Response: `{"success": true, "data": [...]}`
+
+- `POST /api/products/<product_id>/prices/?tenant_id=<uuid>` - Record price
+  - Body: `{"url_hash": "...", "price": 1999, "currency": "JPY", "is_available": true}`
+  - Response: `{"success": true, "data": {...}}`
+
+---
+
+**Data Objects:**
+
+**Product (Tenant Schema):**
 ```json
 {
-  "id": "uuid",
-  "tenant_id": "uuid",
+  "id": "f1c85b92-c245-4af3-889c-90a018ff49e2",
+  "tenant_id": "07f93027-37f8-45cd-b97f-3872814a8ee9",
   "name": "Product Name",
   "sku": "SKU-001",
-  "description": "Product description",
-  "status": "active",
-  "created_at": "2026-01-03T10:00:00Z",
-  "updated_at": "2026-01-03T10:00:00Z"
+  "gtin": "4901234567890",
+  "status": "ACTIVE",
+  "custom_attributes": {},
+  "created_at": "2026-01-05T07:11:00Z",
+  "updated_at": "2026-01-05T07:17:25Z"
 }
 ```
 
-**URL Object:**
+**ProductURLMapping (Tenant Schema):**
 ```json
 {
-  "id": "uuid",
-  "url": "https://example.com/product",
-  "source": "amazon",
-  "url_hash": "sha256hash",
-  "created_at": "2026-01-03T10:00:00Z"
+  "id": "3b877402-8b9a-44d8-a97b-f5e9d53bbb0f",
+  "product_id": "f1c85b92-c245-4af3-889c-90a018ff49e2",
+  "url_hash": "bc22b9aff98b7e3b2db2c3c361dbcb155bca45a19dd198ba570607034057051b",
+  "custom_label": "Amazon Japan",
+  "is_primary": false,
+  "display_order": 0,
+  "created_at": "2026-01-05T07:23:19Z"
 }
 ```
 
-**Price Object:**
+**ProductURL (Public Schema - Shared):**
+```json
+{
+  "id": "08e37a62-62d1-4bc1-bf3e-47be6cf96a38",
+  "raw_url": "https://www.amazon.co.jp/dp/B08N5LNQCX",
+  "normalized_url": "https://www.amazon.co.jp/dp/b08n5lnqcx",
+  "url_hash": "bc22b9aff98b7e3b2db2c3c361dbcb155bca45a19dd198ba570607034057051b",
+  "domain": "amazon.co.jp",
+  "reference_count": 2,
+  "is_active": true,
+  "created_at": "2026-01-05T07:23:19Z"
+}
+```
+
+**PriceHistory (Public Schema - Shared):**
 ```json
 {
   "id": "uuid",
-  "price": 99.99,
-  "currency": "USD",
-  "available": true,
-  "recorded_at": "2026-01-03T10:00:00Z"
+  "url_hash": "bc22b9a...",
+  "price": 19999,
+  "currency": "JPY",
+  "is_available": true,
+  "recorded_at": "2026-01-05T10:00:00Z"
 }
 ```
 
 ---
 
+**Business Logic:**
+
+1. **URL Deduplication:** Same URL → same hash → shared across all tenants
+2. **Reference Counting:** When tenant adds URL, `reference_count++`; when removed, `reference_count--`
+3. **Orphan Cleanup:** URLs with `reference_count=0` can be purged by cleanup job
+4. **SKU/GTIN Uniqueness:** Per-tenant uniqueness enforced
+5. **URL Normalization:** Lowercase, remove tracking params (utm_*, fbclid, etc.)
+
+---
+
 ### 6. API Configuration & Routes ✅
-
-**Location:** `services/products/api/views.py`
-
-**Endpoints:**
-
-**Product Management:**
-- `POST /api/products/tenants/{tenant_id}/products/` - Create new product
-- `GET /api/products/tenants/{tenant_id}/products/` - List products
-- `GET /api/products/tenants/{tenant_id}/products/{product_id}/` - Get product details
-- `PATCH /api/products/tenants/{tenant_id}/products/{product_id}/` - Update product
-- `DELETE /api/products/tenants/{tenant_id}/products/{product_id}/` - Delete product
-
-**Product URL Management (Tracking Links):**
-- `GET /api/products/tenants/{tenant_id}/products/{product_id}/urls/` - List product URLs
-- `POST /api/products/tenants/{tenant_id}/products/{product_id}/urls/` - Add tracking URL
-- `GET /api/products/tenants/{tenant_id}/products/{product_id}/urls/{url_id}/` - Get URL details
-- `PATCH /api/products/tenants/{tenant_id}/products/{product_id}/urls/{url_id}/` - Update URL
-- `DELETE /api/products/tenants/{tenant_id}/products/{product_id}/urls/{url_id}/` - Delete URL
-
-**Price History Tracking:**
-- `GET /api/products/tenants/{tenant_id}/products/{product_id}/urls/{url_id}/prices/` - Get price history
-- `POST /api/products/tenants/{tenant_id}/products/{product_id}/urls/{url_id}/prices/` - Record new price
-
-**Features:**
-- Multi-tenant product management (products in tenant schema)
-- Shared product URLs and price history (in public schema)
-- Service layer integration with async/sync wrappers
-- Input validation via serializers
-- CSRF exempt for API usage
-- Login required for all endpoints
-
-**Test Results:**
-```bash
-$ curl -X POST http://127.0.0.1:8005/api/products/tenants/{tenant_id}/products/ \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Test Product", "sku": "SKU-001", "description": "Test"}'
-{
-    "success": true,
-    "product": {
-        "id": "db8c2c37-a42f-4e32-8e42-bb2d45ceded6",
-        "tenant_id": "f2795519-c935-48fd-8685-59b65356c6ff",
-        "name": "Test Product",
-        "sku": "SKU-001",
-        "description": "Test",
-        "status": "active",
-        "created_at": "2025-12-31T10:30:00Z"
-    },
-    "message": "Product created successfully"
-}
-```
-
-### 3. URLs Configuration ✅
 
 **Main URLs:** `config/urls.py`
 ```python
@@ -350,9 +338,24 @@ urlpatterns = [
 ]
 ```
 
+**Products URLs:** `services/products/api/urls.py`
+```python
+urlpatterns = [
+    # Product CRUD
+    path('', ProductListCreateView.as_view()),
+    path('<uuid:product_id>/', ProductDetailView.as_view()),
+    
+    # Product URL Management
+    path('<uuid:product_id>/urls/', ProductURLListView.as_view()),
+    path('<uuid:product_id>/urls/<str:url_hash>/', ProductURLDetailView.as_view()),
+    
+    # Price History
+    path('<uuid:product_id>/prices/', PriceHistoryView.as_view()),
+]
+```
+
 **Tenants URLs:** `core/tenants/urls.py` - Simple path-based routing
 **Access URLs:** `core/access/urls.py` - RESTful endpoints
-**Products URLs:** `services/products/api/urls.py` - RESTful endpoints with tenant context
 
 ### 4. Architecture Compliance ✅
 
@@ -394,19 +397,24 @@ Django ORM / Database
 
 **Note:** Access repositories need full implementation when business logic is finalized.
 
-### Products Repository (Complete) ✅
-- `DjangoTenantProductRepository` - Full implementation with async wrappers
-- `DjangoSharedProductRepository` - Full implementation with schema context
-- `DjangoSharedProductURLRepository` - Full implementation with CRUD operations
-- `DjangoSharedPriceHistoryRepository` - Full implementation with price analytics
+### Products Repository (Complete - Refactored) ✅
+
+**Tenant Repositories (`services/products/infrastructure/django_repository.py`):**
+- `DjangoProductRepository` - Product CRUD with schema context
+- `DjangoProductURLMappingRepository` - URL mapping management per tenant
+
+**Shared Repositories (`services/products_shared/infrastructure/django_repository.py`):**
+- `DjangoDomainRepository` - Domain entity management (get_or_create)
+- `DjangoProductURLRepository` - Shared URL with deduplication & reference counting
+- `DjangoPriceHistoryRepository` - Price history storage
 
 **Features:**
-- Tenant-schema products via `DjangoTenantProductRepository`
-- Public-schema URLs and prices via `DjangoSharedProduct*Repository`
-- All ORM calls wrapped with `@sync_to_async` for async compatibility
-- Public schema queries use `with schema_context(get_public_schema_name()):`
-- UUID-based identifiers with proper uuid4() generation
-- Search, filter, and analytics methods implemented
+- Tenant-schema products via `DjangoProductRepository`
+- Public-schema URLs via `DjangoProductURLRepository`
+- Cross-schema coordination via `url_hash` (not FK)
+- Reference counting for shared URLs
+- URL normalization and hash generation
+- Domain auto-extraction from URL
 
 ## Updated Documentation
 
@@ -479,8 +487,8 @@ DATABASE_ROUTERS = ['django_tenants.routers.TenantSyncRouter']
 ```
 
 **Apps Configuration:**
-- **SHARED_APPS:** Core platform (tenants, auth, access, admin)
-- **TENANT_APPS:** Business modules (accounts, products, etc.)
+- **SHARED_APPS:** Core platform (tenants, auth, access, admin, **products_shared**)
+- **TENANT_APPS:** Business modules (accounts, **products**, etc.)
 
 **Server:**
 - Gunicorn on port 8005
@@ -532,21 +540,39 @@ const { tenant } = await fetch('/api/tenants/', {
 ```typescript
 const tenantId = tenant.id;
 
-// List products
-const { products } = await fetch(`/api/products/tenants/${tenantId}/products/`, {
+// List products (new simplified URL structure)
+const { data: products } = await fetch(`/api/products/?tenant_id=${tenantId}`, {
   credentials: 'include'
 }).then(r => r.json());
 
 // Create product
-const { product } = await fetch(`/api/products/tenants/${tenantId}/products/`, {
+const { data: product } = await fetch(`/api/products/?tenant_id=${tenantId}`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   credentials: 'include',
   body: JSON.stringify({
     name: 'Product Name',
     sku: 'SKU-001',
-    description: 'Description'
+    gtin: '4901234567890',
+    status: 'ACTIVE'
   })
+}).then(r => r.json());
+
+// Add URL to product
+const { data: urlInfo } = await fetch(`/api/products/${product.id}/urls/?tenant_id=${tenantId}`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  credentials: 'include',
+  body: JSON.stringify({
+    raw_url: 'https://amazon.co.jp/dp/ABC123',
+    custom_label: 'Amazon Japan',
+    is_primary: true
+  })
+}).then(r => r.json());
+
+// List product URLs
+const { data: urls } = await fetch(`/api/products/${product.id}/urls/?tenant_id=${tenantId}`, {
+  credentials: 'include'
 }).then(r => r.json());
 ```
 
@@ -608,33 +634,31 @@ python3.9 manage.py shell < test_tenant_api_client.py
   - PATCH /api/tenants/<id>/ - 200 OK
   - DELETE /api/tenants/<id>/ - 200 OK
 
-✓ Products API
-  - POST /api/products/tenants/<tid>/products/ - 201 Created
-  - GET /api/products/tenants/<tid>/products/ - 200 OK
-  - PATCH /api/products/tenants/<tid>/products/<pid>/ - 200 OK
-  - DELETE /api/products/tenants/<tid>/products/<pid>/ - 200 OK
+✓ Products API (Refactored 2026-01-05)
+  - POST /api/products/?tenant_id=<tid> - 201 Created ✅
+  - GET /api/products/?tenant_id=<tid> - 200 OK ✅
+  - PATCH /api/products/<pid>/?tenant_id=<tid> - 200 OK ✅
+  - DELETE /api/products/<pid>/?tenant_id=<tid> - 200 OK ✅
   
-✓ Product URLs API (Edit/Update fully implemented)
-  - GET /api/products/tenants/<tid>/products/<pid>/urls/ - 200 OK
-  - POST /api/products/tenants/<tid>/products/<pid>/urls/ - 201 Created
-  - GET /api/products/tenants/<tid>/products/<pid>/urls/<uid>/ - 200 OK
-  - **PATCH /api/products/tenants/<tid>/products/<pid>/urls/<uid>/ - 200 OK** ✅
-  - DELETE /api/products/tenants/<tid>/products/<pid>/urls/<uid>/ - 200 OK
+✓ Product URLs API (Cross-schema coordination)
+  - POST /api/products/<pid>/urls/?tenant_id=<tid> - 201 Created ✅
+  - GET /api/products/<pid>/urls/?tenant_id=<tid> - 200 OK ✅
+  - DELETE /api/products/<pid>/urls/<hash>/?tenant_id=<tid> - 200 OK ✅
 ```
 
 ---
 
-**Last Updated:** 2026-01-04  
+**Last Updated:** 2026-01-05  
 **Architecture Status:** STABLE ✅  
-**API Version:** 1.0.0
+**API Version:** 2.0.0
 
 **Summary:**
 - ✅ 5 modules fully functional (Identity, Accounts, Tenants, Access, Products)
-- ✅ 45+ API endpoints implemented
-- ✅ Multi-tenant architecture working
-- ✅ Session-based authentication
-- ✅ Product URL edit/update fully implemented (backend + frontend)
-- ✅ Auto-create admin membership on tenant creation
-- ✅ Schema-per-tenant isolation
+- ✅ Products module refactored for proper multi-tenant data separation
+- ✅ Shared data (ProductURL, PriceHistory) in PUBLIC schema
+- ✅ Tenant data (Product, ProductURLMapping) in TENANT schema
+- ✅ Cross-schema reference via url_hash (not FK)
+- ✅ URL deduplication and reference counting working
+- ✅ Multi-tenant architecture verified
 - ✅ Gunicorn stable on port 8005
 - ✅ Ready for frontend integration

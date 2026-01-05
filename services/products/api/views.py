@@ -310,12 +310,17 @@ class ProductURLsView(APIView):
         service = get_product_service(tid)
         url_infos = service.get_product_urls(tid, product_id)
         
-        # Format response
+        # Format response with domain extracted from URL
+        from urllib.parse import urlparse
         urls = []
         for url_info in url_infos:
+            url_data = ProductURLSerializer(url_info.url).data
+            # Ensure domain is extracted from URL if not set
+            if not url_data.get('domain') and url_data.get('raw_url'):
+                url_data['domain'] = urlparse(url_data['raw_url']).netloc
             urls.append({
                 'mapping': ProductURLMappingSerializer(url_info.mapping).data,
-                'url': ProductURLSerializer(url_info.url).data,
+                'url': url_data,
             })
         
         return Response({

@@ -99,7 +99,7 @@ class ProductURLSerializer(serializers.Serializer):
     raw_url = serializers.CharField()
     normalized_url = serializers.CharField(read_only=True)
     url_hash = serializers.CharField(read_only=True)
-    domain = serializers.CharField(read_only=True)
+    domain = serializers.CharField(read_only=True, required=False, allow_null=True)
     is_active = serializers.BooleanField(read_only=True)
     reference_count = serializers.IntegerField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)

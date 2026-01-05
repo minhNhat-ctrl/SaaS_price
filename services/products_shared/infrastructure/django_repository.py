@@ -8,7 +8,7 @@ from uuid import UUID
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import transaction, models
 from django_tenants.utils import get_public_schema_name, schema_context
 
 from services.products_shared.domain.entities import (

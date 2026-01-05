@@ -59,6 +59,8 @@ SHARED_APPS = [
     'core.tenants.apps.TenantsConfig',
     # Access Module MUST be in SHARED_APPS (memberships are global, not per-tenant)
     'core.access.apps.AccessConfig',
+    # Products Shared Module (ProductURL, PriceHistory, Domain in public schema)
+    'services.products_shared.apps.ProductsSharedConfig',
 ]
 
 TENANT_APPS = [
