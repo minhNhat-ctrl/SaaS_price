@@ -71,14 +71,13 @@ class URLMappingNotFoundError(ProductDomainError):
 
 
 class DuplicateURLError(ProductDomainError):
-    """URL already exists for this tenant."""
+    """URL already mapped to this product."""
     
-    def __init__(self, url: str, tenant_id: str = ""):
+    def __init__(self, url: str, context: str = ""):
         self.url = url
-        self.tenant_id = tenant_id
+        self.context = context
         super().__init__(
-            f"URL '{url}' already exists for tenant {tenant_id}. "
-            "A tenant cannot add the same URL to multiple products."
+            f"URL '{url}' is already mapped to this product."
         )
 
 

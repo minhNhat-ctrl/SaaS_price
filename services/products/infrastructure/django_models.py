@@ -160,10 +160,10 @@ class ProductURLMapping(models.Model):
             models.Index(fields=['url_hash']),
         ]
         constraints = [
-            # A tenant can only add same URL once (across all products)
+            # A product cannot have the same URL mapped twice
             models.UniqueConstraint(
-                fields=['url_hash'],
-                name='unique_url_per_tenant'
+                fields=['product', 'url_hash'],
+                name='unique_url_per_product'
             ),
         ]
         ordering = ['display_order', '-created_at']

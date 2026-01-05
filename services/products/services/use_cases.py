@@ -228,9 +228,10 @@ class ProductService:
         
         url_hash = product_url.url_hash
         
-        # Check if tenant already has this URL mapped
+        # Check if this product already has this URL mapped
         self.mapping_repo.set_tenant(tenant_id)
-        if self.mapping_repo.exists_for_tenant(tenant_id, url_hash):
+        existing_mapping = self.mapping_repo.get_by_product_and_hash(product_id, url_hash)
+        if existing_mapping:
             raise DuplicateURLError(raw_url, str(tenant_id))
         
         # Check if URL already exists in shared (public schema)
