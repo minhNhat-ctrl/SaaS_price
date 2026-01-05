@@ -1,16 +1,15 @@
-"""Product Repositories Layer"""
-from services.products.repositories.product_repo import (
-    TenantProductRepository,
-    SharedProductRepository,
-    SharedProductURLRepository,
-    TenantProductURLTrackingRepository,
-    SharedPriceHistoryRepository,
+"""
+Repository Interfaces (Tenant)
+
+Abstract interfaces for tenant-owned data access.
+"""
+
+from .interfaces import (
+    ProductRepository,
+    ProductURLMappingRepository,
 )
 
 __all__ = [
-    'TenantProductRepository',
-    'SharedProductRepository',
-    'SharedProductURLRepository',
-    'TenantProductURLTrackingRepository',
-    'SharedPriceHistoryRepository',
+    'ProductRepository',
+    'ProductURLMappingRepository',
 ]

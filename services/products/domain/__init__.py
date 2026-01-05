@@ -1,45 +1,52 @@
-"""Product Domain Layer"""
-from services.products.domain.entities import (
-    TenantProduct,
-    SharedProduct,
-    SharedProductURL,
-    SharedPriceHistory,
-    TenantProductURLTracking,
+"""
+Product Domain Layer (Tenant)
+
+Pure business logic for tenant-owned data.
+No framework dependencies.
+
+Entities:
+- Product: Core product entity owned by tenant
+- ProductURLMapping: Links a product to a shared URL via hash
+
+Exceptions:
+- ProductDomainError: Base exception
+- ProductNotFoundError: Product not found
+- DuplicateSKUError: SKU already exists for tenant
+- DuplicateGTINError: GTIN already exists for tenant
+- URLMappingNotFoundError: URL mapping not found
+- DuplicateURLError: URL already exists for tenant
+- InvalidURLError: Invalid URL format
+"""
+
+from .entities import (
+    Product,
+    ProductURLMapping,
     ProductStatus,
-    MarketplaceType,
-    PriceSource,
 )
-from services.products.domain.exceptions import (
+
+from .exceptions import (
     ProductDomainError,
-    TenantProductNotFoundError,
-    TenantProductAlreadyExistsError,
+    ProductNotFoundError,
+    DuplicateSKUError,
+    DuplicateGTINError,
     InvalidProductStatusError,
-    SharedProductNotFoundError,
-    SharedProductAlreadyExistsError,
-    DuplicateProductURLError,
-    InvalidPriceError,
-    PriceHistoryNotFoundError,
+    URLMappingNotFoundError,
+    DuplicateURLError,
+    InvalidURLError,
 )
 
 __all__ = [
     # Entities
-    'TenantProduct',
-    'SharedProduct',
-    'SharedProductURL',
-    'SharedPriceHistory',
-    'TenantProductURLTracking',
-    # Enums
+    'Product',
+    'ProductURLMapping',
     'ProductStatus',
-    'MarketplaceType',
-    'PriceSource',
     # Exceptions
     'ProductDomainError',
-    'TenantProductNotFoundError',
-    'TenantProductAlreadyExistsError',
+    'ProductNotFoundError',
+    'DuplicateSKUError',
+    'DuplicateGTINError',
     'InvalidProductStatusError',
-    'SharedProductNotFoundError',
-    'SharedProductAlreadyExistsError',
-    'DuplicateProductURLError',
-    'InvalidPriceError',
-    'PriceHistoryNotFoundError',
+    'URLMappingNotFoundError',
+    'DuplicateURLError',
+    'InvalidURLError',
 ]

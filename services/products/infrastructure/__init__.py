@@ -1,14 +1,28 @@
-"""Infrastructure Layer - Django Implementation"""
-from services.products.infrastructure.django_models import (
-    TenantProduct,
-    SharedProduct,
-    SharedProductURL,
-    SharedPriceHistory,
+"""
+Infrastructure Layer (Tenant)
+
+Django ORM implementations for tenant-owned data.
+Shared data infrastructure is in products_shared module.
+"""
+
+from .django_models import (
+    Product,
+    ProductURLMapping,
+)
+
+from .django_repository import (
+    DjangoProductRepository,
+    DjangoProductURLMappingRepository,
+    get_tenant_schema_name,
 )
 
 __all__ = [
-    'TenantProduct',
-    'SharedProduct',
-    'SharedProductURL',
-    'SharedPriceHistory',
+    # Models
+    'Product',
+    'ProductURLMapping',
+    # Repositories
+    'DjangoProductRepository',
+    'DjangoProductURLMappingRepository',
+    # Helpers
+    'get_tenant_schema_name',
 ]

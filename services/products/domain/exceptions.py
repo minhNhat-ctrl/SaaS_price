@@ -1,7 +1,8 @@
 """
-Product Domain Exceptions
+Product Domain Exceptions (Tenant)
 
-Business exceptions - no framework dependencies.
+Business exceptions for tenant-owned data.
+No framework dependencies.
 """
 
 
@@ -11,25 +12,37 @@ class ProductDomainError(Exception):
 
 
 # ============================================================
-# Tenant Product Exceptions
+# Product Exceptions
 # ============================================================
 
-class TenantProductNotFoundError(ProductDomainError):
-    """Tenant product not found."""
+class ProductNotFoundError(ProductDomainError):
+    """Product not found."""
     
-    def __init__(self, product_id: str, tenant_id: str):
+    def __init__(self, product_id: str, tenant_id: str = ""):
         self.product_id = product_id
         self.tenant_id = tenant_id
-        super().__init__(f"Tenant product {product_id} not found for tenant {tenant_id}")
+        msg = f"Product {product_id} not found"
+        if tenant_id:
+            msg += f" for tenant {tenant_id}"
+        super().__init__(msg)
 
 
-class TenantProductAlreadyExistsError(ProductDomainError):
-    """Tenant product already exists."""
+class DuplicateSKUError(ProductDomainError):
+    """SKU already exists for this tenant."""
     
-    def __init__(self, sku: str, tenant_id: str):
+    def __init__(self, sku: str, tenant_id: str = ""):
         self.sku = sku
         self.tenant_id = tenant_id
-        super().__init__(f"Product with SKU {sku} already exists for tenant {tenant_id}")
+        super().__init__(f"SKU '{sku}' already exists for tenant {tenant_id}")
+
+
+class DuplicateGTINError(ProductDomainError):
+    """GTIN already exists for this tenant."""
+    
+    def __init__(self, gtin: str, tenant_id: str = ""):
+        self.gtin = gtin
+        self.tenant_id = tenant_id
+        super().__init__(f"GTIN '{gtin}' already exists for tenant {tenant_id}")
 
 
 class InvalidProductStatusError(ProductDomainError):
@@ -42,48 +55,40 @@ class InvalidProductStatusError(ProductDomainError):
 
 
 # ============================================================
-# Shared Product Exceptions
+# URL Mapping Exceptions
 # ============================================================
 
-class SharedProductNotFoundError(ProductDomainError):
-    """Shared product not found."""
+class URLMappingNotFoundError(ProductDomainError):
+    """URL mapping not found."""
     
-    def __init__(self, product_id: str):
+    def __init__(self, url_hash: str, product_id: str = ""):
+        self.url_hash = url_hash
         self.product_id = product_id
-        super().__init__(f"Shared product {product_id} not found")
+        msg = f"URL mapping for hash {url_hash[:16]}... not found"
+        if product_id:
+            msg += f" in product {product_id}"
+        super().__init__(msg)
 
 
-class SharedProductAlreadyExistsError(ProductDomainError):
-    """Shared product already exists."""
+class DuplicateURLError(ProductDomainError):
+    """URL already exists for this tenant."""
     
-    def __init__(self, gtin: str):
-        self.gtin = gtin
-        super().__init__(f"Shared product with GTIN {gtin} already exists")
-
-
-class DuplicateProductURLError(ProductDomainError):
-    """Duplicate product URL."""
-    
-    def __init__(self, url: str):
+    def __init__(self, url: str, tenant_id: str = ""):
         self.url = url
-        super().__init__(f"Product URL {url} already exists")
+        self.tenant_id = tenant_id
+        super().__init__(
+            f"URL '{url}' already exists for tenant {tenant_id}. "
+            "A tenant cannot add the same URL to multiple products."
+        )
 
 
-# ============================================================
-# Price History Exceptions
-# ============================================================
-
-class InvalidPriceError(ProductDomainError):
-    """Invalid price value."""
+class InvalidURLError(ProductDomainError):
+    """Invalid URL format."""
     
-    def __init__(self, price: float):
-        self.price = price
-        super().__init__(f"Invalid price: {price}")
-
-
-class PriceHistoryNotFoundError(ProductDomainError):
-    """Price history not found."""
-    
-    def __init__(self, product_url_id: str):
-        self.product_url_id = product_url_id
-        super().__init__(f"No price history found for product URL {product_url_id}")
+    def __init__(self, url: str, reason: str = ""):
+        self.url = url
+        self.reason = reason
+        msg = f"Invalid URL: {url}"
+        if reason:
+            msg += f" - {reason}"
+        super().__init__(msg)

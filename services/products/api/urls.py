@@ -1,23 +1,51 @@
 """
-Products API URLs
+API URL Configuration
+
+Based on PRODUCTS_DATA_CONTRACT.md architecture.
+
+Supports two patterns:
+1. With tenant_id in URL: /api/products/tenants/<tenant_id>/products/
+2. With tenant_id in query params: /api/products/?tenant_id=<uuid>
+
+URL deletion uses url_hash instead of url_id for cross-schema safety.
 """
 from django.urls import path
-from services.products.api import views
+
+from services.products.api.views import (
+    ProductListCreateView,
+    ProductDetailView,
+    ProductURLsView,
+    ProductURLDetailView,
+    ProductSearchView,
+    PriceHistoryView,
+)
 
 app_name = 'products'
 
 urlpatterns = [
-    # Tenant Products (GET list, POST create)
-    path('tenants/<str:tenant_id>/products/', views.products_list_create_view, name='products-list-create'),
-    # Tenant Products (GET detail, PATCH update, DELETE)
-    path('tenants/<str:tenant_id>/products/<str:product_id>/', views.products_detail_view, name='products-detail'),
+    # ============================================================
+    # Pattern 1: Tenant-scoped routes (recommended)
+    # ============================================================
+    path('tenants/<uuid:tenant_id>/products/', ProductListCreateView.as_view(), name='tenant-product-list-create'),
+    path('tenants/<uuid:tenant_id>/products/search/', ProductSearchView.as_view(), name='tenant-product-search'),
+    path('tenants/<uuid:tenant_id>/products/<uuid:product_id>/', ProductDetailView.as_view(), name='tenant-product-detail'),
+    path('tenants/<uuid:tenant_id>/products/<uuid:product_id>/urls/', ProductURLsView.as_view(), name='tenant-product-urls'),
+    # url_hash is a SHA-256 hash string (64 chars), not UUID
+    path('tenants/<uuid:tenant_id>/products/<uuid:product_id>/urls/<str:url_hash>/', ProductURLDetailView.as_view(), name='tenant-product-url-detail'),
     
-    # Product URLs (GET list, POST add)
-    path('tenants/<str:tenant_id>/products/<str:product_id>/urls/', views.product_urls_view, name='product-urls'),
-    # Product URLs Detail (GET, PATCH update, DELETE)
-    path('tenants/<str:tenant_id>/products/<str:product_id>/urls/<str:url_id>/', views.product_url_detail_view, name='product-url-detail'),
+    # ============================================================
+    # Pattern 2: Query-param tenant routes (for middleware-based tenant)
+    # ============================================================
+    path('', ProductListCreateView.as_view(), name='product-list-create'),
+    path('search/', ProductSearchView.as_view(), name='product-search'),
+    path('<uuid:product_id>/', ProductDetailView.as_view(), name='product-detail'),
+    path('<uuid:product_id>/urls/', ProductURLsView.as_view(), name='product-urls'),
+    # url_hash is a SHA-256 hash string (64 chars), not UUID
+    path('<uuid:product_id>/urls/<str:url_hash>/', ProductURLDetailView.as_view(), name='product-url-detail'),
     
-    # Price History (GET history, POST record)
-    path('tenants/<str:tenant_id>/products/<str:product_id>/urls/<str:url_id>/prices/', 
-         views.price_history_view, name='price-history'),
+    # ============================================================
+    # Shared routes (no tenant context needed)
+    # url_hash used to identify URLs across schemas
+    # ============================================================
+    path('urls/<str:url_hash>/price-history/', PriceHistoryView.as_view(), name='price-history'),
 ]
