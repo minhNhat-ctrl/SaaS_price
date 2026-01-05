@@ -275,11 +275,338 @@ def change_password_view(request):
             new_password=new_password
         )
         
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+# ============================================================
+# Email Verification Endpoints
+# ============================================================
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def request_email_verification_view(request):
+    """
+    Request email verification link.
+    
+    POST /api/identity/request-email-verification/
+    Body: {
+        "email": "user@example.com"
+    }
+    
+    Returns:
+        200: {
+            "success": true,
+            "message": "Verification email sent"
+        }
+    """
+    data = _parse_json_body(request)
+    email = data.get('email', '').strip()
+    
+    if not email:
+        return JsonResponse({
+            'success': False,
+            'error': 'Email is required'
+        }, status=400)
+    
+    try:
+        service = _get_identity_service()
+        result = async_to_sync(service.request_email_verification)(email)
+        
+        if result == "already_verified":
+            return JsonResponse({
+                'success': True,
+                'message': 'Email already verified'
+            }, status=200)
+        
         return JsonResponse({
             'success': True,
-            'message': 'Password changed successfully'
+            'message': 'Verification email sent'
         }, status=200)
         
+    except IdentityNotFoundError:
+        return JsonResponse({
+            'success': False,
+            'error': 'User not found'
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def verify_email_view(request):
+    """
+    Verify email using token.
+    
+    POST /api/identity/verify-email/
+    Body: {
+        "token": "verification_token"
+    }
+    
+    Returns:
+        200: {
+            "success": true,
+            "message": "Email verified successfully",
+            "user": {...}
+        }
+    """
+    data = _parse_json_body(request)
+    token = data.get('token', '').strip()
+    
+    if not token:
+        return JsonResponse({
+            'success': False,
+            'error': 'Token is required'
+        }, status=400)
+    
+    try:
+        service = _get_identity_service()
+        identity = async_to_sync(service.verify_email_token)(token)
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Email verified successfully',
+            'user': {
+                'id': str(identity.id),
+                'email': identity.email,
+                'email_verified': identity.email_verified
+            }
+        }, status=200)
+        
+    except InvalidCredentialError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=400)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+# ============================================================
+# Password Reset Endpoints
+# ============================================================
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def request_password_reset_view(request):
+    """
+    Request password reset link.
+    
+    POST /api/identity/request-password-reset/
+    Body: {
+        "email": "user@example.com"
+    }
+    
+    Returns:
+        200: {
+            "success": true,
+            "message": "Password reset email sent"
+        }
+    """
+    data = _parse_json_body(request)
+    email = data.get('email', '').strip()
+    
+    if not email:
+        return JsonResponse({
+            'success': False,
+            'error': 'Email is required'
+        }, status=400)
+    
+    try:
+        service = _get_identity_service()
+        async_to_sync(service.request_password_reset)(email)
+        
+        # Always return success for security (don't reveal if email exists)
+        return JsonResponse({
+            'success': True,
+            'message': 'If that email exists, a password reset link has been sent'
+        }, status=200)
+        
+    except Exception as e:
+        # Still return success to avoid email enumeration
+        return JsonResponse({
+            'success': True,
+            'message': 'If that email exists, a password reset link has been sent'
+        }, status=200)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def reset_password_view(request):
+    """
+    Reset password using token.
+    
+    POST /api/identity/reset-password/
+    Body: {
+        "token": "reset_token",
+        "new_password": "newsecurepass123"
+    }
+    
+    Returns:
+        200: {
+            "success": true,
+            "message": "Password reset successfully"
+        }
+    """
+    data = _parse_json_body(request)
+    token = data.get('token', '').strip()
+    new_password = data.get('new_password', '').strip()
+    
+    if not token or not new_password:
+        return JsonResponse({
+            'success': False,
+            'error': 'Token and new password are required'
+        }, status=400)
+    
+    if len(new_password) < 8:
+        return JsonResponse({
+            'success': False,
+            'error': 'Password must be at least 8 characters'
+        }, status=400)
+    
+    try:
+        service = _get_identity_service()
+        identity = async_to_sync(service.reset_password_with_token)(token, new_password)
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Password reset successfully',
+            'user': {
+                'id': str(identity.id),
+                'email': identity.email
+            }
+        }, status=200)
+        
+    except InvalidCredentialError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=400)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+# ============================================================
+# Magic Link Login Endpoints
+# ============================================================
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def request_magic_link_view(request):
+    """
+    Request magic link for passwordless login.
+    
+    POST /api/identity/request-magic-link/
+    Body: {
+        "email": "user@example.com"
+    }
+    
+    Returns:
+        200: {
+            "success": true,
+            "message": "Magic link sent to your email"
+        }
+    """
+    data = _parse_json_body(request)
+    email = data.get('email', '').strip()
+    
+    if not email:
+        return JsonResponse({
+            'success': False,
+            'error': 'Email is required'
+        }, status=400)
+    
+    try:
+        service = _get_identity_service()
+        async_to_sync(service.request_magic_link)(email)
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Magic link sent to your email'
+        }, status=200)
+        
+    except IdentityNotFoundError:
+        return JsonResponse({
+            'success': False,
+            'error': 'User not found'
+        }, status=404)
+    except InvalidCredentialError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=400)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def magic_link_login_view(request):
+    """
+    Login using magic link token.
+    
+    POST /api/identity/magic-login/
+    Body: {
+        "token": "magic_link_token"
+    }
+    
+    Returns:
+        200: {
+            "success": true,
+            "message": "Login successful",
+            "user": {...}
+        }
+    """
+    data = _parse_json_body(request)
+    token = data.get('token', '').strip()
+    
+    if not token:
+        return JsonResponse({
+            'success': False,
+            'error': 'Token is required'
+        }, status=400)
+    
+    try:
+        service = _get_identity_service()
+        auth_token = async_to_sync(service.authenticate_with_magic_link)(token)
+        
+        # Create Django session
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user = User.objects.get(id=auth_token.user_id)
+        
+        login(request, user, backend='django.contrib.auth.backends.ModelBackend')
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Login successful',
+            'user': {
+                'id': str(user.id),
+                'email': user.email
+            }
+        }, status=200)
+        
+    except InvalidCredentialError as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=400)
     except IdentityNotFoundError:
         return JsonResponse({
             'success': False,

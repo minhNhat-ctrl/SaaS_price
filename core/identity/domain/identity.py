@@ -86,3 +86,50 @@ class AuthToken:
     user_id: UUID  # User ID associated with this token
     issued_at: datetime = field(default_factory=datetime.utcnow)
     expires_at: Optional[datetime] = None
+
+
+@dataclass
+class VerificationToken:
+    """Email verification token representation."""
+    token: str
+    email: str
+    expires_at: datetime
+    token_type: str  # 'email_verify', 'password_reset', 'magic_link'
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    
+    def is_expired(self) -> bool:
+        """Check if token has expired."""
+        return datetime.utcnow() > self.expires_at
+    
+    @classmethod
+    def create_email_verification(cls, email: str, token: str, valid_hours: int = 24) -> "VerificationToken":
+        """Create email verification token valid for specified hours."""
+        from datetime import timedelta
+        return cls(
+            token=token,
+            email=email,
+            expires_at=datetime.utcnow() + timedelta(hours=valid_hours),
+            token_type='email_verify'
+        )
+    
+    @classmethod
+    def create_password_reset(cls, email: str, token: str, valid_hours: int = 1) -> "VerificationToken":
+        """Create password reset token valid for specified hours."""
+        from datetime import timedelta
+        return cls(
+            token=token,
+            email=email,
+            expires_at=datetime.utcnow() + timedelta(hours=valid_hours),
+            token_type='password_reset'
+        )
+    
+    @classmethod
+    def create_magic_link(cls, email: str, token: str, valid_minutes: int = 15) -> "VerificationToken":
+        """Create magic link token valid for specified minutes."""
+        from datetime import timedelta
+        return cls(
+            token=token,
+            email=email,
+            expires_at=datetime.utcnow() + timedelta(minutes=valid_minutes),
+            token_type='magic_link'
+        )

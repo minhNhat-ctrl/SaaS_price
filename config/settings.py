@@ -28,6 +28,9 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['dj.2kvietnam.com', 'app.2kvietnam.com', 'localhost', '127.0.0.1', 'testserver']
 
+# Frontend URL for email links
+FRONTEND_URL = 'http://localhost:3000'  # Change in production
+
 # CSRF Configuration - Trusted Origins for Cross-Domain Requests
 CSRF_TRUSTED_ORIGINS = [
     'http://dj.2kvietnam.com',
@@ -207,6 +210,22 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ============================================================
+# Email Configuration
+# ============================================================
+# For development: console backend (prints emails to console)
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = 'noreply@2kvietnam.com'
+EMAIL_SUBJECT_PREFIX = '[PriceSynC] '
+
+# For production, use SMTP:
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# EMAIL_HOST = 'smtp.gmail.com'
+# EMAIL_PORT = 587
+# EMAIL_USE_TLS = True
+# EMAIL_HOST_USER = 'your-email@gmail.com'
+# EMAIL_HOST_PASSWORD = 'your-app-password'
 
 # ============================================================
 # Logging Configuration

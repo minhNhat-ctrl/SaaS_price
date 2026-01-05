@@ -5,6 +5,7 @@ Responsibilities:
 - Map Django/allauth models to domain entities
 - Handle password hashing & verification
 - Issue logical tokens (stateless token generator)
+- Handle email verification & magic links
 
 Constraints:
 - No tenant, no role logic
@@ -13,13 +14,17 @@ Constraints:
 import secrets
 from typing import Optional
 from uuid import UUID
+from datetime import datetime
 
 from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model, authenticate
 from django.contrib.auth.tokens import default_token_generator
+from django.core.mail import send_mail
+from django.conf import settings
+from django.core.cache import cache
 from allauth.account.models import EmailAddress
 
-from core.identity.domain.identity import UserIdentity, Credential, AuthToken
+from core.identity.domain.identity import UserIdentity, Credential, AuthToken, VerificationToken
 from core.identity.domain.exceptions import IdentityNotFoundError
 from core.identity.repositories import IdentityRepository
 
@@ -168,3 +173,122 @@ class DjangoAllauthIdentityRepository(IdentityRepository):
         # Stateless token generator cannot revoke; rely on rotation/blacklist handled elsewhere.
         # Placeholder for future implementation (e.g., JWT blacklist).
         return None
+    
+    # ============================================================
+    # Email Verification & Magic Link Implementation
+    # ============================================================
+    
+    async def create_verification_token(self, token: VerificationToken) -> None:
+        """Store verification token in cache (Redis/memory)."""
+        @sync_to_async
+        def _store():
+            # Store in cache with expiration matching token expiry
+            cache_key = f"verify_token:{token.token}"
+            ttl_seconds = int((token.expires_at - datetime.utcnow()).total_seconds())
+            cache.set(cache_key, {
+                'email': token.email,
+                'token_type': token.token_type,
+                'expires_at': token.expires_at.isoformat(),
+            }, timeout=max(ttl_seconds, 60))  # Min 60 seconds
+        
+        await _store()
+    
+    async def get_verification_token(self, token: str) -> Optional[VerificationToken]:
+        """Retrieve verification token from cache."""
+        @sync_to_async
+        def _get():
+            cache_key = f"verify_token:{token}"
+            data = cache.get(cache_key)
+            if not data:
+                return None
+            
+            return VerificationToken(
+                token=token,
+                email=data['email'],
+                expires_at=datetime.fromisoformat(data['expires_at']),
+                token_type=data['token_type'],
+            )
+        
+        return await _get()
+    
+    async def delete_verification_token(self, token: str) -> None:
+        """Delete verification token after use."""
+        @sync_to_async
+        def _delete():
+            cache_key = f"verify_token:{token}"
+            cache.delete(cache_key)
+        
+        await _delete()
+    
+    async def send_verification_email(self, email: str, token: str, token_type: str) -> None:
+        """Send verification email based on token type."""
+        @sync_to_async
+        def _send():
+            # Build verification URL (adjust domain as needed)
+            base_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
+            
+            if token_type == 'email_verify':
+                verify_url = f"{base_url}/verify-email?token={token}"
+                subject = "Verify your email address"
+                message = f"""
+Hello,
+
+Please verify your email address by clicking the link below:
+
+{verify_url}
+
+This link will expire in 24 hours.
+
+If you didn't sign up for an account, please ignore this email.
+
+Best regards,
+PriceSynC Team
+                """
+            
+            elif token_type == 'password_reset':
+                reset_url = f"{base_url}/reset-password?token={token}"
+                subject = "Reset your password"
+                message = f"""
+Hello,
+
+You requested to reset your password. Click the link below to set a new password:
+
+{reset_url}
+
+This link will expire in 1 hour.
+
+If you didn't request a password reset, please ignore this email.
+
+Best regards,
+PriceSynC Team
+                """
+            
+            elif token_type == 'magic_link':
+                login_url = f"{base_url}/magic-login?token={token}"
+                subject = "Login to your account"
+                message = f"""
+Hello,
+
+Click the link below to log in to your account:
+
+{login_url}
+
+This link will expire in 15 minutes.
+
+If you didn't request this login link, please ignore this email.
+
+Best regards,
+PriceSynC Team
+                """
+            else:
+                raise ValueError(f"Unknown token type: {token_type}")
+            
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                fail_silently=False,
+            )
+        
+        await _send()

@@ -29,12 +29,49 @@
   - Body: `{"old_password": "...", "new_password": "..."}`
   - Response: `{"success": true, "message": "Password changed"}`
 
+#### Email Verification (NEW) ✅
+- `POST /api/identity/request-email-verification/` - Request verification email
+  - Body: `{"email": "user@example.com"}`
+  - Response: `{"success": true, "message": "Verification email sent"}`
+  - Sends verification link to email (valid for 24 hours)
+
+- `POST /api/identity/verify-email/` - Verify email with token
+  - Body: `{"token": "verification_token"}`
+  - Response: `{"success": true, "message": "Email verified successfully", "user": {...}}`
+
+#### Password Reset (NEW) ✅
+- `POST /api/identity/request-password-reset/` - Request password reset
+  - Body: `{"email": "user@example.com"}`
+  - Response: `{"success": true, "message": "If that email exists, a password reset link has been sent"}`
+  - Sends reset link to email (valid for 1 hour)
+
+- `POST /api/identity/reset-password/` - Reset password with token
+  - Body: `{"token": "reset_token", "new_password": "newpass123"}`
+  - Response: `{"success": true, "message": "Password reset successfully", "user": {...}}`
+
+#### Magic Link Login (NEW) ✅
+- `POST /api/identity/request-magic-link/` - Request magic link
+  - Body: `{"email": "user@example.com"}`
+  - Response: `{"success": true, "message": "Magic link sent to your email"}`
+  - Sends login link to email (valid for 15 minutes)
+
+- `POST /api/identity/magic-login/` - Login with magic link token
+  - Body: `{"token": "magic_link_token"}`
+  - Response: `{"success": true, "message": "Login successful", "user": {...}}`
+  - Creates session automatically
+
 **Features:**
 - Session-based authentication (Django sessions)
 - CSRF exempt for API calls
 - Automatic session cookie management
 - Integration with Django User model
 - Password validation (min 8 chars)
+- **Email verification via token (24h expiry)** ✨
+- **Passwordless login via magic link (15min expiry)** ✨
+- **Password reset via email token (1h expiry)** ✨
+- **Token storage in cache (Redis/memory)** ✨
+- **Email backend: Console (development) / SMTP (production)** ✨
+
 
 ---
 
