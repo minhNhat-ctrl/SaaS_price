@@ -1,0 +1,766 @@
+"""
+Django Admin Configuration for Crawl Service
+
+Primary interface for managing crawl policies, jobs, and viewing results.
+Integrated with CustomAdminSite for hash-protected access.
+
+Admin Actions:
+- CrawlPolicy: Sync jobs for domain, reset schedule
+- CrawlJob: Sync all missing jobs, mark pending/expired, reset locks
+"""
+
+from django.contrib import admin
+from django.utils.html import format_html
+from django.utils.safestring import mark_safe
+from django.utils import timezone
+from django.urls import reverse
+from django.db.models import Q, Count
+import json
+
+from ..models import CrawlPolicy, CrawlJob, CrawlResult, BotConfig
+from core.admin_core.infrastructure.custom_admin import default_admin_site
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class CrawlResultInline(admin.TabularInline):
+    """Inline results for job"""
+    model = CrawlResult
+    extra = 0
+    readonly_fields = ('price', 'currency', 'in_stock', 'title', 'crawled_at', 'created_at')
+    can_delete = False
+    fields = ('price', 'currency', 'title', 'in_stock', 'crawled_at')
+    
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+class CrawlPolicyAdmin(admin.ModelAdmin):
+    """Admin for Crawl Policy - domain-based group management for URLs"""
+    
+    list_display = (
+        'domain_badge',
+        'name',
+        'pattern_badge',
+        'priority_badge',
+        'frequency_badge',
+        'status_badge',
+        'next_run_at',
+        'failure_count',
+        'last_success_at',
+    )
+    
+    list_filter = ('enabled', 'priority', 'domain__name', 'created_at', 'next_run_at')
+    search_fields = ('domain__name', 'name', 'url_pattern')
+    readonly_fields = (
+        'id',
+        'created_at',
+        'updated_at',
+        'failure_display',
+        'next_run_display',
+    )
+    
+    fieldsets = (
+        ('Domain & Identification', {
+            'fields': ('id', 'domain', 'name', 'url_pattern'),
+            'description': 'Domain-based policy: 1 policy manages many URLs by pattern matching'
+        }),
+        ('Frequency & Priority', {
+            'fields': ('frequency_hours', 'priority', 'enabled')
+        }),
+        ('Retry Configuration', {
+            'fields': ('max_retries', 'retry_backoff_minutes')
+        }),
+        ('Execution Configuration', {
+            'fields': ('timeout_minutes', 'crawl_config')
+        }),
+        ('Scheduling & Tracking', {
+            'fields': ('next_run_at', 'next_run_display', 'last_success_at', 'last_failed_at', 'failure_count', 'failure_display')
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    ordering = ['-priority', 'next_run_at']
+    actions = ['sync_jobs_for_policy', 'reset_schedule']
+    
+    def domain_badge(self, obj):
+        """Display domain name"""
+        if obj.domain:
+            return format_html(
+                '<span style="font-weight: bold; color: #2196F3;">{}</span>',
+                obj.domain.name
+            )
+        return '—'
+    domain_badge.short_description = 'Domain'
+    
+    def pattern_badge(self, obj):
+        """Display URL pattern or 'All URLs'"""
+        if obj.url_pattern:
+            return format_html(
+                '<code style="background: #f5f5f5; padding: 2px 4px; border-radius: 3px;">{}</code>',
+                obj.url_pattern[:40]
+            )
+        return format_html('<span style="color: #4CAF50;">All URLs</span>')
+    pattern_badge.short_description = 'Pattern'
+    
+    def priority_badge(self, obj):
+        """Display priority with color"""
+        colors = {'1': 'gray', '5': 'blue', '10': 'orange', '20': 'red'}
+        priority_labels = {1: 'Low', 5: 'Normal', 10: 'High', 20: 'Urgent'}
+        color = colors.get(str(obj.priority), 'blue')
+        label = priority_labels.get(obj.priority, '?')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 6px; border-radius: 3px;">{}</span>',
+            color, label
+        )
+    priority_badge.short_description = 'Priority'
+    
+    def frequency_badge(self, obj):
+        """Display frequency"""
+        return f"Every {obj.frequency_hours}h"
+    frequency_badge.short_description = 'Frequency'
+    
+    def status_badge(self, obj):
+        """Display enabled status"""
+        if obj.enabled:
+            return format_html('<span style="color: green;">✓ Enabled</span>')
+        return format_html('<span style="color: red;">✗ Disabled</span>')
+    status_badge.short_description = 'Status'
+    
+    def failure_display(self, obj):
+        """Display failure info"""
+        if obj.failure_count == 0:
+            return "No failures"
+        return f"{obj.failure_count} consecutive failures"
+    failure_display.short_description = 'Failure Info'
+    
+    def next_run_display(self, obj):
+        """Display next run info"""
+        now = timezone.now()
+        if obj.next_run_at <= now:
+            return format_html('<span style="color: green; font-weight: bold;">Ready to run NOW</span>')
+        delta = obj.next_run_at - now
+        hours = delta.total_seconds() / 3600
+        return f"In {hours:.1f} hours"
+    next_run_display.short_description = 'Next Run In'
+    
+    @admin.action(description="🔄 Sync Jobs for Selected Policies")
+    def sync_jobs_for_policy(self, request, queryset):
+        """Create jobs for all ProductURLs matching selected policies"""
+        from services.products_shared.infrastructure.django_models import ProductURL
+        from django.db import transaction
+        
+        total_created = 0
+        total_skipped = 0
+        
+        for policy in queryset.filter(enabled=True):
+            if not policy.domain:
+                continue
+            
+            # Get all active ProductURLs for this domain
+            product_urls = ProductURL.objects.filter(
+                domain=policy.domain,
+                is_active=True
+            )
+            
+            for product_url in product_urls:
+                # Check pattern matching
+                if not policy.matches_url(product_url.normalized_url):
+                    continue
+                
+                # Check if job already exists
+                if CrawlJob.objects.filter(product_url=product_url).exists():
+                    total_skipped += 1
+                    continue
+                
+                # Create job
+                with transaction.atomic():
+                    CrawlJob.objects.create(
+                        product_url=product_url,
+                        policy=policy,
+                        status='pending',
+                        priority=policy.priority,
+                        max_retries=policy.max_retries,
+                        timeout_minutes=policy.timeout_minutes
+                    )
+                    total_created += 1
+        
+        self.message_user(
+            request,
+            f"✓ Created {total_created} jobs, skipped {total_skipped} (already exist)"
+        )
+    
+    @admin.action(description="🔁 Reset Schedule to Now")
+    def reset_schedule(self, request, queryset):
+        """Reset next_run_at to now for immediate execution"""
+        count = queryset.update(next_run_at=timezone.now())
+        self.message_user(request, f"✓ Reset schedule for {count} policies")
+    
+    def has_delete_permission(self, request, obj=None):
+        # Only allow delete if no associated jobs
+        if obj and obj.jobs.exists():
+            return False
+        return request.user.is_superuser
+
+
+class CrawlJobAdmin(admin.ModelAdmin):
+    """Admin for Crawl Job - individual URL execution with state machine"""
+    
+    list_display = (
+        'url_badge',
+        'domain_badge',
+        'status_badge',
+        'bot_badge',
+        'priority_badge',
+        'retry_info',
+        'locked_info',
+        'created_at',
+    )
+    
+    list_filter = ('status', 'priority', 'product_url__domain__name', 'created_at', 'locked_at', 'policy')
+    search_fields = ('product_url__normalized_url', 'locked_by', 'product_url__domain__name')
+    readonly_fields = (
+        'id',
+        'product_url',
+        'policy',
+        'created_at',
+        'updated_at',
+        'state_machine_display',
+        'lock_info_display',
+        'error_display',
+        'sync_status_display',
+    )
+    
+    fieldsets = (
+        ('URL & Identification', {
+            'fields': ('id', 'product_url', 'policy'),
+            'description': 'ProductURL references shared data via hash optimization'
+        }),
+        ('Sync Status', {
+            'fields': ('sync_status_display',),
+            'classes': ('collapse',)
+        }),
+        ('State Machine', {
+            'fields': ('status', 'state_machine_display')
+        }),
+        ('Bot Locking', {
+            'fields': ('locked_by', 'locked_at', 'lock_ttl_seconds', 'lock_info_display')
+        }),
+        ('Configuration', {
+            'fields': ('priority', 'max_retries', 'timeout_minutes')
+        }),
+        ('Retry Tracking', {
+            'fields': ('retry_count', 'last_error', 'error_display')
+        }),
+        ('Execution', {
+            'fields': ('last_result_at',)
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    ordering = ['-priority', '-created_at']
+    actions = ['mark_pending', 'mark_expired', 'reset_lock', 'sync_all_missing_jobs']
+    inlines = [CrawlResultInline]
+    
+    def get_queryset(self, request):
+        """Optimize query with select_related"""
+        qs = super().get_queryset(request)
+        return qs.select_related('product_url', 'product_url__domain', 'policy')
+    
+    def url_badge(self, obj):
+        """Display URL with truncation from ProductURL"""
+        if obj.product_url:
+            url = obj.product_url.normalized_url
+            return format_html(
+                '<a href="{}" target="_blank" title="{}">{}</a>',
+                url, url, url[:60]
+            )
+        return '—'
+    url_badge.short_description = 'URL'
+    
+    def domain_badge(self, obj):
+        """Display domain name"""
+        if obj.product_url and obj.product_url.domain:
+            return format_html(
+                '<span style="background: #e3f2fd; padding: 2px 6px; border-radius: 3px;">{}</span>',
+                obj.product_url.domain.name
+            )
+        return '—'
+    domain_badge.short_description = 'Domain'
+    
+    def sync_status_display(self, obj):
+        """Display sync status between ProductURL and CrawlJob"""
+        from services.products_shared.infrastructure.django_models import ProductURL
+        
+        # Count total ProductURLs
+        total_urls = ProductURL.objects.filter(is_active=True).count()
+        
+        # Count jobs
+        total_jobs = CrawlJob.objects.count()
+        
+        # Count URLs without jobs
+        missing_jobs = ProductURL.objects.filter(
+            is_active=True,
+            crawl_jobs__isnull=True
+        ).count()
+        
+        # Count jobs with deleted URLs (orphaned)
+        orphaned_jobs = CrawlJob.objects.filter(
+            product_url__isnull=True
+        ).count()
+        
+        html = '<div style="background: #f5f5f5; padding: 15px; border-radius: 5px; font-family: monospace;">'
+        html += '<h3 style="margin-top: 0;">📊 Sync Status</h3>'
+        html += f'<p><b>Total Active ProductURLs:</b> {total_urls}</p>'
+        html += f'<p><b>Total CrawlJobs:</b> {total_jobs}</p>'
+        
+        if missing_jobs > 0:
+            html += f'<p style="color: #ff9800;"><b>⚠️ URLs without jobs:</b> {missing_jobs}</p>'
+            html += '<p style="color: #999; font-size: 0.9em;">Use action "Sync All Missing Jobs" to create them</p>'
+        else:
+            html += '<p style="color: #4caf50;"><b>✓ All URLs have jobs</b></p>'
+        
+        if orphaned_jobs > 0:
+            html += f'<p style="color: #f44336;"><b>⚠️ Orphaned jobs (deleted URLs):</b> {orphaned_jobs}</p>'
+            html += '<p style="color: #999; font-size: 0.9em;">These will auto-delete due to CASCADE</p>'
+        
+        html += '</div>'
+        return format_html(html)
+    sync_status_display.short_description = 'Sync Status'
+    
+    def status_badge(self, obj):
+        """Display status with color and emoji"""
+        status_colors = {
+            'pending': ('⏳ Pending', 'blue'),
+            'locked': ('🔒 Locked', 'orange'),
+            'done': ('✓ Done', 'green'),
+            'failed': ('✗ Failed', 'red'),
+            'expired': ('⏱️ Expired', 'red'),
+        }
+        label, color = status_colors.get(obj.status, ('Unknown', 'gray'))
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 6px; border-radius: 3px;">{}</span>',
+            color, label
+        )
+    status_badge.short_description = 'Status'
+    
+    def bot_badge(self, obj):
+        """Display bot ID if locked"""
+        if obj.locked_by:
+            return format_html('<span style="color: blue; font-weight: bold;">{}</span>', obj.locked_by)
+        return "—"
+    bot_badge.short_description = 'Bot'
+    
+    def priority_badge(self, obj):
+        """Display priority"""
+        priority_labels = {1: 'Low', 5: 'Normal', 10: 'High', 20: 'Urgent'}
+        return priority_labels.get(obj.priority, '?')
+    priority_badge.short_description = 'Priority'
+    
+    def retry_info(self, obj):
+        """Display retry info"""
+        if obj.retry_count >= obj.max_retries:
+            return format_html('<span style="color: red;">Retries exhausted ({}/{})</span>', obj.retry_count, obj.max_retries)
+        return f"{obj.retry_count}/{obj.max_retries}"
+    retry_info.short_description = 'Retries'
+    
+    def locked_info(self, obj):
+        """Display lock info"""
+        if obj.status != 'locked':
+            return "—"
+        if obj.locked_at:
+            elapsed = (timezone.now() - obj.locked_at).total_seconds()
+            remaining = obj.lock_ttl_seconds - elapsed
+            if remaining < 0:
+                return format_html('<span style="color: red;">EXPIRED</span>')
+            return f"{int(remaining)}s"
+        return "—"
+    locked_info.short_description = 'Lock TTL'
+    
+    def state_machine_display(self, obj):
+        """Show state machine diagram"""
+        states = ['pending', 'locked', 'done', 'failed', 'expired']
+        current = obj.status
+        html = '<div style="font-family: monospace; background: #f5f5f5; padding: 10px; border-radius: 3px;">'
+        html += 'PENDING → LOCKED → DONE<br/>↓<br/>FAILED (if retries left → PENDING)<br/>EXPIRED (if TTL exceeded)<br><br>'
+        html += f'<b>Current: <span style="color: #2196F3;">{current.upper()}</span></b>'
+        html += '</div>'
+        return format_html(html)
+    state_machine_display.short_description = 'State Machine'
+    
+    def lock_info_display(self, obj):
+        """Show lock info"""
+        if obj.status != 'locked':
+            return "Not locked"
+        html = f'<b>Locked by:</b> {obj.locked_by}<br/>'
+        if obj.locked_at:
+            elapsed = (timezone.now() - obj.locked_at).total_seconds()
+            remaining = obj.lock_ttl_seconds - elapsed
+            html += f'<b>TTL:</b> {obj.lock_ttl_seconds}s<br/>'
+            html += f'<b>Elapsed:</b> {int(elapsed)}s<br/>'
+            html += f'<b>Remaining:</b> {int(remaining)}s<br/>'
+            if remaining < 0:
+                html += '<span style="color: red; font-weight: bold;">⚠️ LOCK EXPIRED</span>'
+        return format_html(html)
+    lock_info_display.short_description = 'Lock Details'
+    
+    def error_display(self, obj):
+        """Show error info"""
+        if not obj.last_error:
+            return "No errors"
+        return f"{obj.last_error[:200]}"
+    error_display.short_description = 'Last Error'
+    
+    @admin.action(description="🔄 Sync All Missing Jobs from ProductURLs")
+    def sync_all_missing_jobs(self, request, queryset):
+        """Create jobs for all ProductURLs that don't have jobs yet"""
+        from services.products_shared.infrastructure.django_models import ProductURL
+        from django.db import transaction
+        
+        # Get all active ProductURLs without jobs
+        product_urls = ProductURL.objects.filter(
+            is_active=True,
+            crawl_jobs__isnull=True
+        ).select_related('domain')
+        
+        total_urls = product_urls.count()
+        total_created = 0
+        total_failed = 0
+        
+        for product_url in product_urls:
+            try:
+                # Find matching policy by domain
+                policies = CrawlPolicy.objects.filter(
+                    domain=product_url.domain,
+                    enabled=True
+                ).order_by('-priority')
+                
+                matching_policy = None
+                for policy in policies:
+                    if policy.matches_url(product_url.normalized_url):
+                        matching_policy = policy
+                        break
+                
+                if not matching_policy:
+                    # Create default policy if not exists
+                    matching_policy, created = CrawlPolicy.objects.get_or_create(
+                        domain=product_url.domain,
+                        name='Default Policy',
+                        defaults={
+                            'frequency_hours': 24,
+                            'priority': 5,
+                            'enabled': True,
+                            'next_run_at': timezone.now()
+                        }
+                    )
+                
+                # Create job
+                with transaction.atomic():
+                    CrawlJob.objects.create(
+                        product_url=product_url,
+                        policy=matching_policy,
+                        status='pending',
+                        priority=matching_policy.priority,
+                        max_retries=matching_policy.max_retries,
+                        timeout_minutes=matching_policy.timeout_minutes
+                    )
+                    total_created += 1
+                    
+            except Exception as e:
+                total_failed += 1
+                logger.error(f"Failed to create job for {product_url.normalized_url}: {e}")
+        
+        self.message_user(
+            request,
+            f"✓ Synced {total_urls} ProductURLs: created {total_created} jobs, {total_failed} failed"
+        )
+    
+    @admin.action(description="Mark as Pending")
+    def mark_pending(self, request, queryset):
+        """Reset job status to PENDING for re-execution"""
+        updated = queryset.update(
+            status='pending',
+            locked_by=None,
+            locked_at=None
+        )
+        self.message_user(request, f"✓ {updated} jobs marked as PENDING")
+    
+    @admin.action(description="Mark as Expired")
+    def mark_expired(self, request, queryset):
+        """Mark LOCKED jobs as EXPIRED"""
+        updated = queryset.filter(status='locked').update(
+            status='expired',
+            locked_by=None,
+            locked_at=None
+        )
+        self.message_user(request, f"✓ {updated} jobs marked as EXPIRED")
+    
+    @admin.action(description="Reset Lock")
+    def reset_lock(self, request, queryset):
+        """Release locks for LOCKED jobs"""
+        updated = queryset.filter(status='locked').update(
+            locked_by=None,
+            locked_at=None,
+            status='pending'
+        )
+        self.message_user(request, f"✓ Released locks on {updated} jobs")
+    
+    def has_delete_permission(self, request, obj=None):
+        # Only allow delete if not LOCKED
+        if obj and obj.status == 'locked':
+            return False
+        return request.user.is_superuser
+
+
+class CrawlResultAdmin(admin.ModelAdmin):
+    """Admin for Crawl Result - outcomes from bot execution"""
+    
+    list_display = (
+        'job_url',
+        'price_display',
+        'stock_badge',
+        'crawled_ago',
+        'created_at',
+    )
+    
+    list_filter = ('currency', 'in_stock', 'created_at', 'crawled_at')
+    search_fields = ('job__url', 'title')
+    readonly_fields = (
+        'id',
+        'job',
+        'created_at',
+        'parsed_data_display',
+    )
+    
+    fieldsets = (
+        ('Result Identification', {
+            'fields': ('id', 'job', 'created_at')
+        }),
+        ('Price Information', {
+            'fields': ('price', 'currency')
+        }),
+        ('Product Information', {
+            'fields': ('title', 'in_stock')
+        }),
+        ('Crawl Details', {
+            'fields': ('crawled_at',)
+        }),
+        ('Parser Data', {
+            'fields': ('parsed_data_display', 'raw_html'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    ordering = ['-created_at']
+    
+    def job_url(self, obj):
+        """Display job URL from ProductURL"""
+        if obj.job.product_url:
+            return obj.job.product_url.normalized_url[:60]
+        return '—'
+    job_url.short_description = 'URL'
+    
+    def price_display(self, obj):
+        """Display price with currency"""
+        return f"{obj.price} {obj.currency}"
+    price_display.short_description = 'Price'
+    
+    def stock_badge(self, obj):
+        """Display stock status"""
+        if obj.in_stock:
+            return format_html('<span style="color: green;">✓ In Stock</span>')
+        return format_html('<span style="color: red;">✗ Out of Stock</span>')
+    stock_badge.short_description = 'Stock'
+    
+    def crawled_ago(self, obj):
+        """Display how long ago crawled"""
+        delta = timezone.now() - obj.crawled_at
+        minutes = delta.total_seconds() / 60
+        if minutes < 60:
+            return f"{int(minutes)} min ago"
+        hours = minutes / 60
+        if hours < 24:
+            return f"{int(hours)}h ago"
+        days = hours / 24
+        return f"{int(days)}d ago"
+    crawled_ago.short_description = 'Crawled'
+    
+    def parsed_data_display(self, obj):
+        """Display parsed data as formatted JSON"""
+        if not obj.parsed_data:
+            return "No data"
+        html = '<pre style="background: #f5f5f5; padding: 10px; border-radius: 3px;">'
+        html += json.dumps(obj.parsed_data, indent=2, ensure_ascii=False)
+        html += '</pre>'
+        return format_html(html)
+    parsed_data_display.short_description = 'Parsed Data'
+    
+    def has_add_permission(self, request):
+        # Results created only via API
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        # Results should be kept for audit trail
+        return False
+
+
+class BotConfigAdmin(admin.ModelAdmin):
+    """Admin for Bot Configuration - manage bot authentication and settings"""
+    
+    list_display = (
+        'bot_status_badge',
+        'bot_id',
+        'name',
+        'max_jobs_per_pull',
+        'custom_ttl_display',
+        'success_rate_display',
+        'stats_display',
+        'last_pull_at',
+    )
+    
+    list_filter = ('enabled', 'created_at', 'last_pull_at')
+    search_fields = ('bot_id', 'name', 'description')
+    readonly_fields = (
+        'id',
+        'total_jobs_pulled',
+        'total_jobs_completed',
+        'total_jobs_failed',
+        'last_pull_at',
+        'last_submit_at',
+        'created_at',
+        'updated_at',
+        'success_rate_display',
+    )
+    
+    fieldsets = (
+        ('Bot Identification', {
+            'fields': ('id', 'bot_id', 'name', 'description')
+        }),
+        ('Authentication', {
+            'fields': ('api_token', 'enabled')
+        }),
+        ('Configuration', {
+            'fields': (
+                'max_jobs_per_pull',
+                'custom_lock_ttl_seconds',
+                'rate_limit_per_minute',
+                'priority_boost',
+            )
+        }),
+        ('Domain Filtering', {
+            'fields': ('allowed_domains',),
+            'description': 'List of domains this bot can crawl. Leave empty to allow all domains.'
+        }),
+        ('Statistics', {
+            'fields': (
+                'total_jobs_pulled',
+                'total_jobs_completed',
+                'total_jobs_failed',
+                'success_rate_display',
+                'last_pull_at',
+                'last_submit_at',
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Audit', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    ordering = ['-enabled', 'bot_id']
+    
+    def bot_status_badge(self, obj):
+        """Display bot status with badge"""
+        if obj.enabled:
+            return format_html(
+                '<span style="background: #28a745; color: white; padding: 3px 8px; '
+                'border-radius: 3px; font-weight: bold;">✓ ENABLED</span>'
+            )
+        return format_html(
+            '<span style="background: #dc3545; color: white; padding: 3px 8px; '
+            'border-radius: 3px; font-weight: bold;">✗ DISABLED</span>'
+        )
+    bot_status_badge.short_description = 'Status'
+    
+    def custom_ttl_display(self, obj):
+        """Display custom TTL or default"""
+        if obj.custom_lock_ttl_seconds:
+            return format_html(
+                '<span style="background: #17a2b8; color: white; padding: 2px 6px; '
+                'border-radius: 3px;">{} sec</span>',
+                obj.custom_lock_ttl_seconds
+            )
+        return format_html(
+            '<span style="color: #6c757d;">600 sec (default)</span>'
+        )
+    custom_ttl_display.short_description = 'Lock TTL'
+    
+    def success_rate_display(self, obj):
+        """Display success rate with color coding"""
+        rate = obj.success_rate()
+        if rate >= 80:
+            color = '#28a745'  # Green
+        elif rate >= 50:
+            color = '#ffc107'  # Yellow
+        else:
+            color = '#dc3545'  # Red
+        
+        return format_html(
+            '<span style="background: {}; color: white; padding: 2px 8px; '
+            'border-radius: 3px; font-weight: bold;">{:.1f}%</span>',
+            color, rate
+        )
+    success_rate_display.short_description = 'Success Rate'
+    
+    def stats_display(self, obj):
+        """Display job statistics"""
+        return format_html(
+            '<span style="color: #28a745;">✓ {}</span> | '
+            '<span style="color: #dc3545;">✗ {}</span> | '
+            '<span style="color: #6c757d;">Total: {}</span>',
+            obj.total_jobs_completed,
+            obj.total_jobs_failed,
+            obj.total_jobs_pulled
+        )
+    stats_display.short_description = 'Stats (✓/✗/Total)'
+    
+    actions = ['enable_bots', 'disable_bots', 'reset_stats']
+    
+    def enable_bots(self, request, queryset):
+        """Enable selected bots"""
+        count = queryset.update(enabled=True)
+        self.message_user(request, f'{count} bot(s) enabled')
+    enable_bots.short_description = 'Enable selected bots'
+    
+    def disable_bots(self, request, queryset):
+        """Disable selected bots"""
+        count = queryset.update(enabled=False)
+        self.message_user(request, f'{count} bot(s) disabled')
+    disable_bots.short_description = 'Disable selected bots'
+    
+    def reset_stats(self, request, queryset):
+        """Reset bot statistics"""
+        for bot in queryset:
+            bot.total_jobs_pulled = 0
+            bot.total_jobs_completed = 0
+            bot.total_jobs_failed = 0
+            bot.last_pull_at = None
+            bot.last_submit_at = None
+            bot.save()
+        self.message_user(request, f'Statistics reset for {queryset.count()} bot(s)')
+    reset_stats.short_description = 'Reset statistics'
+
+
+# Register models to CustomAdminSite (hash-protected)
+default_admin_site.register(CrawlPolicy, CrawlPolicyAdmin)
+default_admin_site.register(CrawlJob, CrawlJobAdmin)
+default_admin_site.register(CrawlResult, CrawlResultAdmin)
+default_admin_site.register(BotConfig, BotConfigAdmin)

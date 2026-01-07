@@ -1,0 +1,350 @@
+"""
+API Layer - Bot Endpoints with State Machine
+
+Pull-based bot architecture:
+1. POST /api/crawl/pull/ - Bot pulls available PENDING jobs, acquires lock
+2. POST /api/crawl/submit/ - Bot submits result, transitions to DONE/FAILED, reschedules policy
+
+State transitions:
+  Pull: PENDING → LOCKED (bot acquires lock)
+  Submit: LOCKED → DONE or LOCKED → FAILED (with auto-retry if retries remain)
+"""
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.permissions import AllowAny
+from django.utils import timezone
+from django.db.models import Q
+import logging
+
+from ..models import CrawlJob, CrawlPolicy, CrawlResult
+from .serializers import (
+    BotPullRequestSerializer,
+    JobResponseSerializer,
+    CrawlResultSubmissionSerializer,
+    ResultResponseSerializer,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class BotPullJobsView(APIView):
+    """
+    Bot pulls available PENDING jobs and acquires lock.
+    
+    POST /api/crawl/pull/
+    Request:
+    {
+        "bot_id": "bot-001",
+        "max_jobs": 10,
+        "domain": "example.com"  # optional, filter by domain
+    }
+    
+    Response:
+    {
+        "success": true,
+        "data": {
+            "jobs": [
+                {
+                    "job_id": "uuid",
+                    "url": "https://...",
+                    "priority": 10,
+                    "max_retries": 3,
+                    "timeout_seconds": 600,
+                    "retry_count": 0,
+                    "locked_until": "2025-01-XX..."
+                }
+            ],
+            "count": 1
+        }
+    }
+    
+    On error (already locked by another bot):
+    {
+        "success": false,
+        "error": "job_already_locked",
+        "detail": "Job is currently locked by bot-002"
+    }
+    """
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        try:
+            # Validate request
+            serializer = BotPullRequestSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response({
+                    'success': False,
+                    'error': 'validation_error',
+                    'detail': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            bot_id = serializer.validated_data['bot_id']
+            max_jobs = serializer.validated_data.get('max_jobs', 10)
+            domain = (serializer.validated_data.get('domain') or '').strip() or None
+            
+            # Query PENDING jobs (not yet locked)
+            jobs_qs = CrawlJob.objects.select_related('product_url', 'product_url__domain').filter(
+                status=CrawlJob.STATE_PENDING
+            )
+            
+            # Filter by domain if provided
+            if domain:
+                jobs_qs = jobs_qs.filter(product_url__domain__name__icontains=domain)
+            
+            # Order by priority DESC, created_at ASC
+            jobs_qs = jobs_qs.order_by('-priority', 'created_at')[:max_jobs]
+            
+            assigned_jobs = []
+            failed_locks = []
+            
+            for job in jobs_qs:
+                # Attempt to lock the job
+                if job.lock_for_bot(bot_id):
+                    # Lock successful
+                    timeout_at = timezone.now() + timezone.timedelta(
+                        seconds=job.lock_ttl_seconds
+                    )
+                    assigned_jobs.append({
+                        'job_id': str(job.id),
+                        'url': job.product_url.normalized_url,
+                        'priority': job.priority,
+                        'max_retries': job.max_retries,
+                        'timeout_seconds': job.lock_ttl_seconds,
+                        'retry_count': job.retry_count,
+                        'locked_until': timeout_at.isoformat(),
+                    })
+                else:
+                    # Lock failed - job already locked by another bot
+                    failed_locks.append({
+                        'job_id': str(job.id),
+                        'url': job.product_url.normalized_url,
+                        'locked_by': job.locked_by,
+                    })
+            
+            logger.info(
+                f"Bot {bot_id} pulled {len(assigned_jobs)} jobs "
+                f"({len(failed_locks)} already locked)"
+            )
+            
+            return Response({
+                'success': True,
+                'data': {
+                    'jobs': assigned_jobs,
+                    'count': len(assigned_jobs),
+                    'skipped': len(failed_locks),  # Jobs already locked by other bots
+                }
+            })
+        
+        except Exception as e:
+            logger.error(f"Error in pull endpoint: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': 'internal_error',
+                'detail': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class BotSubmitResultView(APIView):
+    """
+    Bot submits crawl result after executing job.
+    
+    POST /api/crawl/submit/
+    Request:
+    {
+        "bot_id": "bot-001",
+        "job_id": "uuid",
+        "success": true,
+        "price": 99.99,
+        "currency": "USD",
+        "title": "Product Name",
+        "in_stock": true,
+        "parsed_data": {...},
+        "raw_html": "...",
+        "error_msg": ""  # if success=false
+    }
+    
+    Response (success=true):
+    {
+        "success": true,
+        "data": {
+            "result_id": "uuid",
+            "job_id": "uuid",
+            "status": "done",
+            "price": 99.99,
+            "currency": "USD",
+            "policy_next_run": "2025-01-XX..."
+        }
+    }
+    
+    Response (success=false, with auto-retry):
+    {
+        "success": true,
+        "data": {
+            "job_id": "uuid",
+            "status": "pending",  # auto-transitioned back to pending
+            "retry_count": 1,
+            "max_retries": 3,
+            "message": "Job marked for retry"
+        }
+    }
+    
+    Errors:
+    - job_not_found: Job ID doesn't exist
+    - job_not_locked: Job is not in LOCKED state
+    - not_assigned: Job not locked by this bot
+    - lock_expired: Lock TTL exceeded
+    - retries_exhausted: No more retries available
+    """
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        try:
+            # Validate request
+            serializer = CrawlResultSubmissionSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response({
+                    'success': False,
+                    'error': 'validation_error',
+                    'detail': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            data = serializer.validated_data
+            bot_id = data['bot_id']
+            job_id = data['job_id']
+            success = data['success']
+            
+            # Get job
+            try:
+                job = CrawlJob.objects.get(id=job_id)
+            except CrawlJob.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'job_not_found',
+                    'detail': f'Job {job_id} not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Verify job is LOCKED
+            if job.status != CrawlJob.STATE_LOCKED:
+                return Response({
+                    'success': False,
+                    'error': 'job_not_locked',
+                    'detail': f'Job is in {job.status} state, expected locked'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Verify lock ownership
+            if job.locked_by != bot_id:
+                return Response({
+                    'success': False,
+                    'error': 'not_assigned',
+                    'detail': f'Job locked by {job.locked_by}, not {bot_id}'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            # Check if lock expired
+            if job.is_lock_expired():
+                job.mark_expired()
+                return Response({
+                    'success': False,
+                    'error': 'lock_expired',
+                    'detail': 'Lock TTL exceeded'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # ===== Handle Success Case =====
+            if success:
+                # Create result
+                result = CrawlResult.objects.create(
+                    job=job,
+                    price=data['price'],
+                    currency=data['currency'],
+                    title=data.get('title') or '',
+                    in_stock=data.get('in_stock', True),
+                    raw_html=data.get('raw_html'),
+                    parsed_data=data.get('parsed_data', {}),
+                    crawled_at=timezone.now()
+                )
+                
+                # Transition job: LOCKED → DONE
+                job.mark_done()
+                
+                # Reschedule policy
+                if job.policy:
+                    job.policy.schedule_next_run(success=True)
+                
+                logger.info(
+                    f"Job {job_id} completed: {result.price} {result.currency}"
+                )
+                
+                return Response({
+                    'success': True,
+                    'data': {
+                        'result_id': str(result.id),
+                        'job_id': str(job.id),
+                        'status': job.status,
+                        'price': float(result.price),
+                        'currency': result.currency,
+                        'policy_next_run': (
+                            job.policy.next_run_at.isoformat()
+                            if job.policy
+                            else None
+                        )
+                    }
+                }, status=status.HTTP_201_CREATED)
+            
+            # ===== Handle Failure Case =====
+            else:
+                error_msg = data.get('error_msg', 'Unknown error')
+                
+                # Check if retries available
+                if job.retry_count < job.max_retries - 1:
+                    # Auto-retry: transition back to PENDING
+                    job.mark_failed(error_msg=error_msg, auto_retry=True)
+                    
+                    logger.warning(
+                        f"Job {job_id} failed, auto-retrying "
+                        f"({job.retry_count}/{job.max_retries}): {error_msg}"
+                    )
+                    
+                    return Response({
+                        'success': True,
+                        'data': {
+                            'job_id': str(job.id),
+                            'status': job.status,
+                            'retry_count': job.retry_count,
+                            'max_retries': job.max_retries,
+                            'message': 'Job marked for retry'
+                        }
+                    })
+                else:
+                    # Retries exhausted: transition to FAILED
+                    job.mark_failed(error_msg=error_msg, auto_retry=False)
+                    
+                    # Reschedule policy with failure backoff
+                    if job.policy:
+                        job.policy.schedule_next_run(success=False)
+                    
+                    logger.error(
+                        f"Job {job_id} failed permanently "
+                        f"(retries exhausted): {error_msg}"
+                    )
+                    
+                    return Response({
+                        'success': True,
+                        'data': {
+                            'job_id': str(job.id),
+                            'status': job.status,
+                            'retry_count': job.retry_count,
+                            'max_retries': job.max_retries,
+                            'message': 'Retries exhausted',
+                            'error': error_msg
+                        }
+                    })
+        
+        except Exception as e:
+            logger.error(f"Error in submit endpoint: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': 'internal_error',
+                'detail': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
