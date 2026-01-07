@@ -103,6 +103,38 @@ class AdminService:
 
         return is_valid
 
+    def validate_admin_hash_sync(
+        self,
+        provided_hash: str,
+        client_ip: Optional[str] = None,
+    ) -> bool:
+        """
+        Synchronous version of validate_admin_hash
+        Used by middleware to avoid async/sync mismatch
+        
+        Args:
+            provided_hash: Hash từ URL
+            client_ip: IP của client
+        
+        Returns:
+            True nếu hash hợp lệ, False nếu không
+        """
+        # Check rate limit trước
+        if client_ip and self._is_rate_limited(client_ip):
+            raise AdminSecurityError(
+                f"Too many failed attempts from {client_ip}. Please try again later."
+            )
+
+        # So sánh hash (sử dụng hash service)
+        expected_hash = self.hash_service.get_hash()
+        is_valid = self.hash_service.constant_time_compare(provided_hash, expected_hash)
+
+        # Track failed attempt nếu invalid
+        if not is_valid and client_ip:
+            self._record_failed_attempt(client_ip, "invalid_hash")
+
+        return is_valid
+
     async def discover_and_load_admin_modules(
         self,
         base_path: Optional[str] = None,

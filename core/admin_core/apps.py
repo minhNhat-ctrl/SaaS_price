@@ -53,12 +53,18 @@ class AdminCoreConfig(AppConfig):
         )
         from core.admin_core.infrastructure.security_middleware import AdminSecurityMiddleware
         from core.admin_core.infrastructure.custom_admin import default_admin_site
+        import os
         
         # 1. Initialize AdminHashService
         try:
             hash_service = AdminHashService(
                 secret_key=getattr(settings, 'SECRET_KEY', None)
             )
+            
+            # Set admin hash from environment or use default
+            admin_hash = os.environ.get('ADMIN_HASH', 'secure-admin-2025')
+            hash_service.admin_hash = admin_hash
+            
             logger.info("✓ AdminHashService initialized")
         except Exception as e:
             logger.error(f"✗ Failed to initialize AdminHashService: {str(e)}")

@@ -14,10 +14,12 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
-from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 import os
+
+# Import CustomAdminSite instead of default admin
+from core.admin_core.infrastructure.custom_admin import default_admin_site
 
 # Fixed admin hash (set via environment variable or use default)
 # To change: export ADMIN_HASH="your-custom-hash-here"
@@ -27,9 +29,9 @@ urlpatterns = [
     # Standard admin (disabled - use hash-protected instead)
     # path('admin/', admin.site.urls),
     
-    # Admin Core - protected by fixed hash URL
+    # Admin Core - protected by fixed hash URL using CustomAdminSite
     # URL: /admin/{ADMIN_HASH}/
-    path(f'admin/{ADMIN_HASH}/', admin.site.urls, name='admin_hash'),
+    path(f'admin/{ADMIN_HASH}/', default_admin_site.urls, name='admin_hash'),
     
     # API endpoints for React SPA
     # Identity module - authentication
@@ -46,6 +48,9 @@ urlpatterns = [
     
     # Products module - product management and price tracking
     path('api/products/', include('services.products.api.urls')),
+    
+    # Crawl Service - bot-controlled web crawling
+    path('api/crawl/', include('services.crawl_service.api.urls')),
 ]
 
 # Admin URL for reference (check via manage.py shell or logs)

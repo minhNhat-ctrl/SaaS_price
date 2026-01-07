@@ -62,7 +62,16 @@ class TenantMiddleware(MiddlewareMixin):
         Notes:
         - Django-tenants middleware đã set schema context
         - Middleware này resolve domain entity
+        - Admin routes bypass tenant resolution (run in public schema)
         """
+        # Bypass tenant resolution for admin routes
+        # Admin needs to access SHARED_APPS models in public schema
+        if request.path.startswith('/admin/'):
+            logger.debug(f"Bypassing tenant resolution for admin route: {request.path}")
+            request.tenant = None  # Mark as non-tenant request
+            response = self.get_response(request)
+            return response
+        
         # Extract domain từ HTTP_HOST
         domain = request.META.get('HTTP_HOST', '').split(':')[0]  # Bỏ port nếu có
 

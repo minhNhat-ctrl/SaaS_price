@@ -107,7 +107,7 @@ class AdminSecurityMiddleware(MiddlewareMixin):
 
         path = request.path
         # Extract hash từ path: /admin/{hash}/ → hash
-        match = re.match(r'^/admin/([a-f0-9]+)/', path)
+        match = re.match(r'^/admin/([a-zA-Z0-9\-]+)/', path)
         
         if not match:
             # /admin/ mà không có hash → invalid
@@ -118,18 +118,14 @@ class AdminSecurityMiddleware(MiddlewareMixin):
         client_ip = self._get_client_ip(request)
 
         try:
-            # Gọi AdminService (không gọi AdminHashService trực tiếp)
-            # AdminService sẽ handle rate limiting + validation
-            import asyncio
-            is_valid = asyncio.run(
-                self.admin_service.validate_admin_hash(provided_hash, client_ip)
-            )
+            # Call synchronous method directly instead of async
+            is_valid = self.admin_service.validate_admin_hash_sync(provided_hash, client_ip)
             return is_valid
         except AdminSecurityError as e:
             logger.warning(f"Admin security error from {client_ip}: {str(e)}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error validating admin hash: {str(e)}")
+            logger.error(f"Unexpected error validating admin hash: {str(e)}", exc_info=True)
             return False
 
     def _handle_invalid_hash(self, request):

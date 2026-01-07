@@ -64,6 +64,8 @@ SHARED_APPS = [
     'core.access.apps.AccessConfig',
     # Products Shared Module (ProductURL, PriceHistory, Domain in public schema)
     'services.products_shared.apps.ProductsSharedConfig',
+    # Crawl Service (Bot interaction module - not per-tenant)
+    'services.crawl_service.apps.CrawlServiceConfig',
 ]
 
 TENANT_APPS = [
@@ -119,7 +121,7 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],  # Add templates directory for overrides
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -163,6 +165,10 @@ else:
 TENANT_MODEL = 'tenants.Tenant'
 TENANT_DOMAIN_MODEL = 'tenants.TenantDomain'
 DATABASE_ROUTERS = ['django_tenants.routers.TenantSyncRouter']
+
+# Django-tenants: Show public/shared apps in admin even without tenant context
+# This allows SHARED_APPS models to appear in admin interface
+SHOW_PUBLIC_IF_NO_TENANT = True
 
 
 # Password validation

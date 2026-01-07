@@ -84,10 +84,13 @@ class CustomAdminSite(admin.AdminSite):
         
         urls = super().get_urls()
         
-        # Custom views
+        # Custom views - wrap with admin_view for permission checks
         custom_urls = [
-            path('modules/', self.admin_site_view(self.modules_view), name='admin_modules'),
-            path('stats/', self.admin_site_view(self.stats_view), name='admin_stats'),
+            path('modules/', self.admin_view(self.modules_view), name='admin_modules'),
+            path('stats/', self.admin_view(self.stats_view), name='admin_stats'),
+            # Crawl Service dashboard shortcuts
+            path('crawl/', self.admin_view(self.crawl_dashboard_view), name='admin_crawl_dashboard'),
+            path('crawl/create-jobs/', self.admin_view(self.crawl_create_jobs_view), name='admin_crawl_create_jobs'),
         ]
         
         return custom_urls + urls
@@ -138,6 +141,110 @@ class CustomAdminSite(admin.AdminSite):
             'stats': stats,
         }
         return render(request, 'admin/stats.html', context)
+
+    def crawl_dashboard_view(self, request):
+        """Simple Crawl Service dashboard with shortcuts to models and actions"""
+        from django.http import HttpResponse
+        base = self.each_context(request)
+        # Build shortcut links (respect current admin base path)
+        # The admin base includes hash, so relative paths work
+        html = f"""
+        <div class="module">
+          <h2>Crawl Service</h2>
+          <ul>
+            <li><a href="../crawl_service/schedulerule/">Schedule Rules</a></li>
+            <li><a href="../crawl_service/crawljob/">Crawl Jobs</a></li>
+            <li><a href="../crawl_service/crawltask/">Crawl Tasks</a></li>
+            <li><a href="../crawl_service/crawlresult/">Crawl Results</a></li>
+            <li><a href="./create-jobs/">Create Jobs from Shared Products</a></li>
+          </ul>
+        </div>
+        """
+        return HttpResponse(html)
+
+    def crawl_create_jobs_view(self, request):
+                """Admin view to trigger job import from shared products
+
+                Displays a simple form (GET submission) to avoid manual query params.
+                """
+                from django.shortcuts import redirect
+                from django.contrib import messages
+                from django.http import HttpResponse
+                from services.crawl_service.utils import create_jobs_from_shared
+                from services.crawl_service.models import ScheduleRule
+                from services.products_shared.infrastructure.django_models import Domain
+
+                # Form submission via GET to avoid CSRF template setup here
+                rule_id = request.GET.get('rule')
+                domain = request.GET.get('domain')
+                limit = request.GET.get('limit')
+                only_active = request.GET.get('only_active')
+
+                # If no rule specified, render a simple form
+                if not rule_id:
+                        rules = ScheduleRule.objects.order_by('name')
+                        domains = Domain.objects.order_by('name')
+                        # Build options
+                        rule_options = "".join([f'<option value="{r.id}">{r.name}</option>' for r in rules])
+                        domain_options = '<option value="">-- Any Domain --</option>' + "".join([
+                                f'<option value="{d.name}">{d.name}</option>' for d in domains
+                        ])
+
+                        html = f"""
+                        <div class="module">
+                            <h2>Create Crawl Jobs from Shared Products</h2>
+                            <form method="get" action="">
+                                <div class="form-row">
+                                    <label>Schedule Rule*</label>
+                                    <select name="rule" required>
+                                        {rule_options}
+                                    </select>
+                                </div>
+                                <div class="form-row">
+                                    <label>Domain</label>
+                                    <select name="domain">
+                                        {domain_options}
+                                    </select>
+                                </div>
+                                <div class="form-row">
+                                    <label>Limit</label>
+                                    <input type="number" name="limit" min="1" placeholder="e.g. 100" />
+                                </div>
+                                <div class="form-row">
+                                    <label>Only Active URLs</label>
+                                    <input type="checkbox" name="only_active" value="true" checked />
+                                </div>
+                                <div class="submit-row">
+                                    <button type="submit" class="default">Create Jobs</button>
+                                </div>
+                            </form>
+                        </div>
+                        """
+                        return HttpResponse(html)
+
+                # Normalize only_active flag
+                only_active_flag = True
+                if only_active is not None:
+                        only_active_flag = str(only_active).lower() not in ('false', '0', 'no')
+
+                try:
+                        created = create_jobs_from_shared(
+                                schedule_rule_id=rule_id,
+                                domain_name=domain or None,
+                                limit=int(limit) if limit else None,
+                                only_active=only_active_flag,
+                        )
+                        msg = f'Imported {created} jobs from shared products'
+                        if domain:
+                                msg += f' (domain={domain})'
+                        if limit:
+                                msg += f' (limit={limit})'
+                        messages.success(request, msg)
+                except Exception as e:
+                        messages.error(request, f'Error importing jobs: {str(e)}')
+
+                # Redirect back to Crawl Jobs list
+                return redirect('../crawl_service/crawljob/')
 
     @staticmethod
     def _get_client_ip(request) -> str:
