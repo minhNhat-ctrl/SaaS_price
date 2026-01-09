@@ -19,11 +19,20 @@ class BotPullRequestSerializer(serializers.Serializer):
     """
     Serializer for bot job pull request.
     Bot requests available PENDING jobs to execute.
+    
+    Requires authentication:
+    - bot_id: unique bot identifier
+    - api_token: bot API token from BotConfig
     """
     bot_id = serializers.CharField(
         max_length=100,
         required=True,
         help_text="Unique bot identifier"
+    )
+    api_token = serializers.CharField(
+        max_length=255,
+        required=True,
+        help_text="API authentication token"
     )
     max_jobs = serializers.IntegerField(
         default=10,
@@ -59,9 +68,14 @@ class CrawlResultSubmissionSerializer(serializers.Serializer):
     Serializer for bot result submission.
     Bot submits crawl result (success) or error (failure).
     
+    Requires authentication:
+    - bot_id: bot identifier
+    - api_token: bot API token
+    
     Success submission:
     {
         "bot_id": "bot-001",
+        "api_token": "bot_bot-001_...",
         "job_id": "uuid",
         "success": true,
         "price": 99.99,
@@ -75,6 +89,7 @@ class CrawlResultSubmissionSerializer(serializers.Serializer):
     Failure submission:
     {
         "bot_id": "bot-001",
+        "api_token": "bot_bot-001_...",
         "job_id": "uuid",
         "success": false,
         "error_msg": "Timeout: page didn't load"
@@ -84,6 +99,11 @@ class CrawlResultSubmissionSerializer(serializers.Serializer):
         max_length=100,
         required=True,
         help_text="Bot ID that executed the job"
+    )
+    api_token = serializers.CharField(
+        max_length=255,
+        required=True,
+        help_text="API authentication token"
     )
     job_id = serializers.UUIDField(
         required=True,

@@ -8,6 +8,11 @@ Pull-based bot architecture:
 State transitions:
   Pull: PENDING → LOCKED (bot acquires lock)
   Submit: LOCKED → DONE or LOCKED → FAILED (with auto-retry if retries remain)
+
+Authentication:
+  All endpoints require:
+  - bot_id: bot identifier from BotConfig
+  - api_token: API token from BotConfig
 """
 
 from rest_framework.views import APIView
@@ -16,6 +21,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny
 from django.utils import timezone
 from django.db.models import Q
+from decimal import Decimal
 import logging
 
 from ..models import CrawlJob, CrawlPolicy, CrawlResult
@@ -25,6 +31,7 @@ from .serializers import (
     CrawlResultSubmissionSerializer,
     ResultResponseSerializer,
 )
+from .auth import authenticate_bot, auth_error_response
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +88,23 @@ class BotPullJobsView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             bot_id = serializer.validated_data['bot_id']
-            max_jobs = serializer.validated_data.get('max_jobs', 10)
+            api_token = serializer.validated_data['api_token']
+            
+            # Authenticate bot
+            is_authenticated, result = authenticate_bot(bot_id, api_token)
+            if not is_authenticated:
+                return auth_error_response(result)
+            
+            bot_config = result
+            
+            max_jobs = min(
+                serializer.validated_data.get('max_jobs', 10),
+                bot_config.max_jobs_per_pull
+            )
             domain = (serializer.validated_data.get('domain') or '').strip() or None
+            
+            # Update bot stats
+            bot_config.increment_pull()
             
             # Query PENDING jobs (not yet locked)
             jobs_qs = CrawlJob.objects.select_related('product_url', 'product_url__domain').filter(
@@ -212,8 +234,16 @@ class BotSubmitResultView(APIView):
             
             data = serializer.validated_data
             bot_id = data['bot_id']
+            api_token = data['api_token']
             job_id = data['job_id']
             success = data['success']
+            
+            # Authenticate bot
+            is_authenticated, result = authenticate_bot(bot_id, api_token)
+            if not is_authenticated:
+                return auth_error_response(result)
+            
+            bot_config = result
             
             # Get job
             try:
@@ -252,27 +282,32 @@ class BotSubmitResultView(APIView):
             
             # ===== Handle Success Case =====
             if success:
-                # Create result
-                result = CrawlResult.objects.create(
+                # Create or update result (overwrites previous attempts for the job)
+                result, _ = CrawlResult.objects.update_or_create(
                     job=job,
-                    price=data['price'],
-                    currency=data['currency'],
-                    title=data.get('title') or '',
-                    in_stock=data.get('in_stock', True),
-                    raw_html=data.get('raw_html'),
-                    parsed_data=data.get('parsed_data', {}),
-                    crawled_at=timezone.now()
+                    defaults={
+                        'price': data['price'],
+                        'currency': data['currency'],
+                        'title': data.get('title') or '',
+                        'in_stock': data.get('in_stock', True),
+                        'raw_html': data.get('raw_html'),
+                        'parsed_data': data.get('parsed_data', {}),
+                        'crawled_at': timezone.now(),
+                    }
                 )
                 
                 # Transition job: LOCKED → DONE
                 job.mark_done()
+                
+                # Update bot stats
+                bot_config.increment_completed()
                 
                 # Reschedule policy
                 if job.policy:
                     job.policy.schedule_next_run(success=True)
                 
                 logger.info(
-                    f"Job {job_id} completed: {result.price} {result.currency}"
+                    f"Job {job_id} completed: {result.price} {result.currency} by {bot_id}"
                 )
                 
                 return Response({
@@ -295,10 +330,31 @@ class BotSubmitResultView(APIView):
             else:
                 error_msg = data.get('error_msg', 'Unknown error')
                 
+                # Persist result even on failure for debugging/traceability
+                failure_result, _ = CrawlResult.objects.update_or_create(
+                    job=job,
+                    defaults={
+                        'price': Decimal('0.00'),
+                        'currency': data.get('currency') or 'N/A',
+                        'title': data.get('title') or error_msg[:500],
+                        'in_stock': data.get('in_stock', False),
+                        'raw_html': data.get('raw_html'),
+                        'parsed_data': {
+                            **(data.get('parsed_data') or {}),
+                            'error_msg': error_msg,
+                            'success': False,
+                        },
+                        'crawled_at': timezone.now(),
+                    }
+                )
+                
                 # Check if retries available
                 if job.retry_count < job.max_retries - 1:
                     # Auto-retry: transition back to PENDING
                     job.mark_failed(error_msg=error_msg, auto_retry=True)
+                    
+                    # Update bot stats
+                    bot_config.increment_failed()
                     
                     logger.warning(
                         f"Job {job_id} failed, auto-retrying "
@@ -309,6 +365,7 @@ class BotSubmitResultView(APIView):
                         'success': True,
                         'data': {
                             'job_id': str(job.id),
+                            'result_id': str(failure_result.id),
                             'status': job.status,
                             'retry_count': job.retry_count,
                             'max_retries': job.max_retries,
@@ -319,12 +376,15 @@ class BotSubmitResultView(APIView):
                     # Retries exhausted: transition to FAILED
                     job.mark_failed(error_msg=error_msg, auto_retry=False)
                     
+                    # Update bot stats
+                    bot_config.increment_failed()
+                    
                     # Reschedule policy with failure backoff
                     if job.policy:
                         job.policy.schedule_next_run(success=False)
                     
                     logger.error(
-                        f"Job {job_id} failed permanently "
+                        f"Job {job_id} failed permanently by {bot_id} "
                         f"(retries exhausted): {error_msg}"
                     )
                     
@@ -332,6 +392,7 @@ class BotSubmitResultView(APIView):
                         'success': True,
                         'data': {
                             'job_id': str(job.id),
+                            'result_id': str(failure_result.id),
                             'status': job.status,
                             'retry_count': job.retry_count,
                             'max_retries': job.max_retries,

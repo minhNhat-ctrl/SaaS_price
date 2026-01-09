@@ -19,15 +19,15 @@ Comprehensive guide for building bots that integrate with the Crawl Service to e
 
 ## Architecture Overview
 
-### Pull-Based Bot Architecture
+### Pull-Based Bot Architecture (Domain-Grouped Policies)
 
-The Crawl Service uses a **pull-based** architecture where bots actively request work:
+The Crawl Service uses a **pull-based** architecture with **domain-grouped policies** for scalability to millions of URLs:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Crawl Service (Django backend)                              │
-│  - CrawlPolicy: Define when URLs should be crawled         │
-│  - CrawlJob: Individual execution with state machine       │
+│  - CrawlPolicy: Domain-based group (1 policy = many URLs)   │
+│  - CrawlJob: Individual execution via ProductURL hash       │
 │  - CrawlResult: Bot-submitted outcomes                     │
 └─────────────────────────────────────────────────────────────┘
          ▲                                    │
@@ -40,44 +40,90 @@ The Crawl Service uses a **pull-based** architecture where bots actively request
            Bot 1, Bot 2, ..., Bot N (Independent workers)
 ```
 
-### State Machine: Job Lifecycle
+### CrawlPolicy Design (Domain-Based Grouping)
 
-Every crawl job follows a deterministic state machine:
+**Old Design (Per-URL):**
+- ❌ 1 CrawlPolicy per URL
+- ❌ Not scalable for millions of URLs
+- ❌ Wasteful: 2048 char URL per job record
+
+**New Design (Domain-Based):**
+- ✅ 1 CrawlPolicy per domain/pattern (e.g., "amazon.co.jp - Default")
+- ✅ Pattern matching for selective crawling
+- ✅ Scales to millions of URLs
+- ✅ Optimized: 64-char hash references instead of full URLs
+
+Example:
+```python
+policy = CrawlPolicy.objects.create(
+    domain=Domain.objects.get(name='amazon.co.jp'),
+    name='Default Policy',
+    url_pattern='',  # Empty = match all URLs
+    frequency_hours=24,
+    priority=5,
+    enabled=True
+)
+
+# This 1 policy manages ALL URLs for amazon.co.jp
+# Jobs reference ProductURL via hash: product_url_hash (64 chars vs 2048)
+```
+
+### State Machine: Job Lifecycle (5 States)
+
+Every crawl job follows a deterministic state machine with **5 states**:
+
+| State | Value | Description | Bot Action |
+|-------|-------|-------------|------------|
+| **PENDING** | `pending` | Ready to be pulled by a bot | Pull job |
+| **LOCKED** | `locked` | Bot is executing, lock held | Execute + Submit |
+| **DONE** | `done` | Crawl succeeded, result saved | None (terminal) |
+| **FAILED** | `failed` | Crawl failed, retries exhausted | None (terminal) |
+| **EXPIRED** | `expired` | Lock TTL exceeded, bot didn't respond | Admin recovery |
 
 ```
-      ┌─────────┐
-      │ PENDING │  (ready to crawl, no lock held)
-      └────┬────┘
-           │ bot pulls job → lock acquired
-           │
-      ┌────▼─────┐
-      │  LOCKED   │  (bot is executing, lock held for TTL)
-      └┬───────┬──┘
-       │       │
-       │       └──→ timeout TTL exceeded
-       │            ▼
-       │       ┌────────────┐
-       │       │  EXPIRED   │  (lock TTL exceeded, bot didn't respond)
-       │       └────────────┘
-       │
-       ├─→ crawl succeeded
-       │    ▼
-       │  ┌────┐
-       │  │DONE│  (result saved, policy rescheduled)
-       │  └────┘
-       │
-       └─→ crawl failed
-            ├─→ retries remaining
-            │    ▼
-            │  ┌────────┐
-            │  │PENDING │  (auto-transitioned for retry)
-            │  └────────┘
-            │
-            └─→ no retries left
-                 ▼
-              ┌────────┐
-              │ FAILED │  (permanent failure, policy adjusted)
-              └────────┘
+                              ┌─────────────────────────┐
+                              │         PENDING         │
+                              │  (ready to crawl)       │
+                              └───────────┬─────────────┘
+                                          │
+                                          │ POST /api/crawl/pull/
+                                          │ bot acquires lock
+                                          ▼
+                              ┌─────────────────────────┐
+                              │         LOCKED          │
+                              │  (bot executing)        │
+                              │  TTL: 600s default      │
+                              └─────┬───────────┬───────┘
+                                    │           │
+            ┌───────────────────────┤           ├───────────────────────┐
+            │                       │           │                       │
+            │ TTL exceeded          │           │                       │
+            │ (no submit)           │           │                       │
+            ▼                       │           │                       ▼
+┌─────────────────────┐             │           │             ┌─────────────────────┐
+│       EXPIRED       │             │           │             │        DONE         │
+│  (lock timeout)     │             │           │             │  (crawl succeeded)  │
+│  Admin can reset    │             │           │             │  Result saved       │
+└─────────────────────┘             │           │             │  Policy rescheduled │
+                                    │           │             └─────────────────────┘
+                                    │           │
+                POST /api/crawl/submit/         POST /api/crawl/submit/
+                success=false                   success=true
+                                    │           │
+                                    ▼           │
+                    ┌───────────────────────┐   │
+                    │   retry_count check   │   │
+                    └───────┬───────┬───────┘   │
+                            │       │           │
+          retry_count       │       │  retry_count >= max_retries - 1
+          < max_retries - 1 │       │
+                            ▼       ▼
+                  ┌───────────┐   ┌─────────────────────┐
+                  │  PENDING  │   │       FAILED        │
+                  │  (retry)  │   │  (permanent fail)   │
+                  └───────────┘   │  Policy rescheduled │
+                                  │  with backoff       │
+                                  └─────────────────────┘
 ```
 
 ### Key Concepts
@@ -95,17 +141,32 @@ Every crawl job follows a deterministic state machine:
 
 ## Quick Start
 
-### 1. Authenticate (optional, currently AllowAny)
+### 1. Get API Token
 
-No authentication required currently. All endpoints are public.
+1. Go to Django Admin: `/admin/secure-admin-2025/`
+2. Navigate to **Bot Configuration**
+3. Click on your bot or create a new one
+4. Copy the **API Token** field
+5. Use this token in all API requests
 
-### 2. Bot Pulls a Job
+### 2. Authenticate (Required)
+
+All API endpoints require authentication using:
+- `bot_id`: Your bot identifier from BotConfig
+- `api_token`: Your unique API token
+
+Token format: `bot_<bot_id>_<random_string>`
+
+Example: `bot_bot-001_Xk5m_lJ9k8N...`
+
+### 3. Bot Pulls a Job
 
 ```bash
-curl -X POST http://localhost:8000/api/crawl/pull/ \
+curl -X POST http://127.0.0.1:8005/api/crawl/pull/ \
   -H "Content-Type: application/json" \
   -d '{
     "bot_id": "bot-001",
+    "api_token": "bot_bot-001_Xk5m_lJ9k8N...",
     "max_jobs": 5,
     "domain": "example.com"
   }'
@@ -133,7 +194,7 @@ Response:
 }
 ```
 
-### 3. Bot Executes the Job
+### 4. Bot Executes the Job
 
 Bot now has 10 minutes (600s) to:
 - Fetch the URL
@@ -141,13 +202,14 @@ Bot now has 10 minutes (600s) to:
 - Parse the HTML/JSON
 - Submit the result
 
-### 4. Bot Submits Result
+### 5. Bot Submits Result
 
 ```bash
-curl -X POST http://localhost:8000/api/crawl/submit/ \
+curl -X POST http://localhost:8005/api/crawl/submit/ \
   -H "Content-Type: application/json" \
   -d '{
     "bot_id": "bot-001",
+    "api_token": "bot_bot-001_Xk5m_lJ9k8N...",
     "job_id": "550e8400-e29b-41d4-a716-446655440000",
     "success": true,
     "price": 99.99,
@@ -181,17 +243,38 @@ Response:
 
 ## API Endpoints
 
+### Authentication Required
+
+All requests must include both credentials in the JSON body:
+
+```json
+{
+  "bot_id": "string (required, max 100 chars)",
+  "api_token": "string (required, from BotConfig)"
+}
+```
+
+Authentication responses are uniform:
+
+| Status | Error | Meaning |
+|--------|-------|---------|
+| 401 | `authentication_error` | Missing bot_id/api_token, invalid token, or bot not found |
+| 403 | `authentication_error` | Bot exists but is disabled |
+
 ### POST /api/crawl/pull/
 
-Bot requests available PENDING jobs to execute.
+Bot requests available PENDING jobs and acquires locks atomically.
+
+**Status codes**: `200 OK` on success, error codes below when applicable.
 
 #### Request
 
 ```json
 {
   "bot_id": "string (required, max 100 chars)",
-  "max_jobs": "integer (optional, default 10, max 100)",
-  "domain": "string (optional, filter by domain like 'example.com')"
+  "api_token": "string (required)",
+  "max_jobs": "integer (optional, default 10, capped by bot_config.max_jobs_per_pull, hard cap 100)",
+  "domain": "string (optional, contains filter like 'example.com')"
 }
 ```
 
@@ -207,22 +290,28 @@ Bot requests available PENDING jobs to execute.
         "url": "string",
         "priority": "integer (1-20)",
         "max_retries": "integer",
-        "timeout_seconds": "integer (lock TTL)",
+        "timeout_seconds": "integer (lock TTL seconds)",
         "retry_count": "integer (current retries)",
         "locked_until": "ISO 8601 datetime"
       }
     ],
-    "count": "integer",
-    "skipped": "integer (already locked by other bots)"
+    "count": "integer (assigned jobs)",
+    "skipped": "integer (jobs already locked by other bots)"
   }
 }
 ```
+
+**Notes**:
+- There is no `job_already_locked` error; contention is reported via `skipped`.
+- Jobs are ordered by `priority DESC` then `created_at ASC`.
 
 #### Errors
 
 | Status | Error | Meaning |
 |--------|-------|---------|
-| 400 | `validation_error` | Invalid request data (missing bot_id, etc.) |
+| 400 | `validation_error` | Invalid request data |
+| 401 | `authentication_error` | Invalid credentials |
+| 403 | `authentication_error` | Bot is disabled |
 | 500 | `internal_error` | Server error |
 
 ---
@@ -231,11 +320,17 @@ Bot requests available PENDING jobs to execute.
 
 Bot submits crawl result after executing job.
 
+**Status codes**:
+- `201 Created` when a success result is saved (success=true)
+- `200 OK` when failure is accepted (auto-retry or retries exhausted)
+- Error codes per table below
+
 #### Request (Success Case)
 
 ```json
 {
-  "bot_id": "string (required, must match job lock)",
+  "bot_id": "string (required)",
+  "api_token": "string (required)",
   "job_id": "UUID (required)",
   "success": true,
   "price": "decimal (required, >= 0.00)",
@@ -247,11 +342,80 @@ Bot submits crawl result after executing job.
 }
 ```
 
+#### SaaS Multi-Job Worker - parsed_data Structure
+
+Khi sử dụng `saas_multi_job_worker`, bot sẽ tự động gửi `parsed_data` với cấu trúc sau:
+
+```json
+{
+  "bot_id": "bot-001",
+  "api_token": "abcd-128nkaj-321-21",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "success": true,
+  "price": 1290000.0,
+  "currency": "VND",
+  "parsed_data": {
+    "source_url": "https://example.com/product/123",
+    "price_formatted": "1,290,000 VND",
+    "price_sources": ["jsonld", "html_ml"],
+    "confidence": 0.8504585067273558,
+    "price_extraction": {
+      "extract_price_from_jsonld": {
+        "price": 1290000,
+        "currency": "VND",
+        "confidence": 0.95
+      },
+      "extract_price_from_og": {
+        "price": null,
+        "currency": null,
+        "confidence": 0.0
+      },
+      "extract_price_from_microdata": {
+        "price": null,
+        "currency": null,
+        "confidence": 0.0
+      },
+      "extract_price_from_script_data": {
+        "price": 1290000,
+        "currency": "VND",
+        "confidence": 0.85
+      },
+      "extract_price_from_html_ml": {
+        "price": 1290000,
+        "currency": "VND",
+        "confidence": 0.8504585067273558
+      }
+    }
+  }
+}
+```
+
+**parsed_data Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source_url` | string | URL nguồn đã crawl |
+| `price_formatted` | string | Giá đã format human-readable (e.g., "1,290,000 VND") |
+| `price_sources` | array | Danh sách các nguồn đã extract được giá |
+| `confidence` | float | Độ tin cậy tổng hợp (0.0 - 1.0) |
+| `price_extraction` | object | Chi tiết extraction từ mỗi nguồn |
+
+**price_extraction Sources:**
+
+| Source | Description |
+|--------|-------------|
+| `extract_price_from_jsonld` | Giá từ JSON-LD structured data (highest priority) |
+| `extract_price_from_og` | Giá từ Open Graph meta tags |
+| `extract_price_from_microdata` | Giá từ HTML Microdata |
+| `extract_price_from_script_data` | Giá từ inline JavaScript/JSON |
+| `extract_price_from_html_ml` | Giá từ ML-based DOM extraction |
+
 #### Request (Failure Case)
 
 ```json
 {
   "bot_id": "string",
+  "api_token": "string",
   "job_id": "UUID",
   "success": false,
   "error_msg": "string (optional, error description)"
@@ -269,14 +433,14 @@ Bot submits crawl result after executing job.
     "status": "done",
     "price": "decimal",
     "currency": "string",
-    "policy_next_run": "ISO 8601 (when policy will next run)"
+    "policy_next_run": "ISO 8601 (next scheduled run, can be null)"
   }
 }
 ```
 
 #### Response (Failure - Auto Retry)
 
-If `retry_count < max_retries`, job auto-transitions to PENDING:
+If `retry_count < max_retries - 1`, job transitions back to `pending` for retry:
 
 ```json
 {
@@ -293,7 +457,7 @@ If `retry_count < max_retries`, job auto-transitions to PENDING:
 
 #### Response (Failure - Retries Exhausted)
 
-If `retry_count >= max_retries`, job transitions to FAILED:
+If retries are exhausted, job transitions to `failed`:
 
 ```json
 {
@@ -314,6 +478,8 @@ If `retry_count >= max_retries`, job transitions to FAILED:
 | Status | Error | Meaning |
 |--------|-------|---------|
 | 400 | `validation_error` | Missing required fields (price, currency if success=true) |
+| 400 | `authentication_error` | Missing or invalid credentials |
+| 403 | `authentication_error` | Bot is disabled or unauthorized |
 | 404 | `job_not_found` | Job ID doesn't exist |
 | 400 | `job_not_locked` | Job is not in LOCKED state (can't submit) |
 | 403 | `not_assigned` | Job locked by different bot |
@@ -324,49 +490,157 @@ If `retry_count >= max_retries`, job transitions to FAILED:
 
 ## State Machine
 
-### State Transitions
+### All 5 States
 
-#### PENDING State
-- **Entry**: Policy-created, or auto-transitioned after failure with retries remaining
-- **Actions**: Wait to be pulled by bot
-- **Exit**: Bot calls pull → transitions to LOCKED
-- **Timeout**: None (can stay indefinitely)
+| State | Constant | Description |
+|-------|----------|-------------|
+| PENDING | `CrawlJob.STATE_PENDING` | Job is waiting to be pulled by a bot |
+| LOCKED | `CrawlJob.STATE_LOCKED` | Bot has acquired lock, currently executing |
+| DONE | `CrawlJob.STATE_DONE` | Crawl succeeded, result saved (terminal) |
+| FAILED | `CrawlJob.STATE_FAILED` | Crawl failed, retries exhausted (terminal) |
+| EXPIRED | `CrawlJob.STATE_EXPIRED` | Lock TTL exceeded without response |
 
-#### LOCKED State
-- **Entry**: Bot calls pull successfully
-- **Duration**: `lock_ttl_seconds` (default 600s = 10 minutes)
-- **Bot Action**: Execute crawl, must call submit before TTL expires
-- **Exit Paths**:
-  - **DONE**: submit with `success=true` → result saved, policy rescheduled
-  - **FAILED**: submit with `success=false` + no retries → permanent failure
-  - **PENDING**: submit with `success=false` + retries remaining → auto-retry
-  - **EXPIRED**: TTL exceeded without submit → lock released, auto-transitioned back to PENDING (or EXPIRED if admin mark)
+### State Transitions (Bot Perspective)
 
-#### DONE State
-- **Entry**: submit with `success=true`
-- **Result**: CrawlResult record created with price, stock, etc.
-- **Final**: No further transitions
-- **Policy**: Rescheduled based on `frequency_hours`
+#### 1. PENDING → LOCKED (Bot pulls job)
 
-#### FAILED State
-- **Entry**: submit with `success=false` + no retries remaining
-- **Final**: No further transitions
-- **Policy**: Rescheduled with exponential backoff based on `retry_backoff_minutes`
+**Trigger**: `POST /api/crawl/pull/`
 
-#### EXPIRED State
-- **Entry**: Lock TTL exceeded without bot response
-- **Reason**: Bot likely crashed or network timeout
-- **Admin Recovery**: Can manually reset to PENDING
-- **Auto Recovery**: Management command finds and marks expired
+**What happens**:
+1. Bot sends pull request with `bot_id` + `api_token`
+2. System finds PENDING jobs, orders by priority DESC
+3. For each job, attempts to acquire lock via `job.lock_for_bot(bot_id)`
+4. Lock acquired: `status='locked'`, `locked_by=bot_id`, `locked_at=now()`
+5. Job returned to bot with `locked_until` timestamp
 
-### Reading Current State
+**Bot receives**:
+```json
+{
+  "job_id": "uuid",
+  "url": "https://...",
+  "timeout_seconds": 600,
+  "locked_until": "2026-01-07T10:10:00Z"
+}
+```
+
+#### 2. LOCKED → DONE (Success submit)
+
+**Trigger**: `POST /api/crawl/submit/` with `success=true`
+
+**What happens**:
+1. Bot sends result with price, currency, title, etc.
+2. System verifies: job is LOCKED, locked_by matches bot_id, lock not expired
+3. Creates `CrawlResult` record
+4. Calls `job.mark_done()`: clears lock, sets status='done'
+5. Reschedules policy: `policy.schedule_next_run(success=True)`
+
+**Bot receives**:
+```json
+{
+  "result_id": "uuid",
+  "status": "done",
+  "policy_next_run": "2026-01-08T10:00:00Z"
+}
+```
+
+#### 3. LOCKED → PENDING (Failure with retries)
+
+**Trigger**: `POST /api/crawl/submit/` with `success=false` and `retry_count < max_retries - 1`
+
+**What happens**:
+1. Bot sends failure with optional `error_msg`
+2. System calls `job.mark_failed(error_msg, auto_retry=True)`
+3. Increments `retry_count`, clears lock
+4. Sets `status='pending'` for re-queue
+5. Job can be pulled again by any bot
+
+**Bot receives**:
+```json
+{
+  "job_id": "uuid",
+  "status": "pending",
+  "retry_count": 1,
+  "max_retries": 3,
+  "message": "Job marked for retry"
+}
+```
+
+#### 4. LOCKED → FAILED (Retries exhausted)
+
+**Trigger**: `POST /api/crawl/submit/` with `success=false` and `retry_count >= max_retries - 1`
+
+**What happens**:
+1. Bot sends failure with optional `error_msg`
+2. System calls `job.mark_failed(error_msg, auto_retry=False)`
+3. Sets `status='failed'` (terminal state)
+4. Reschedules policy with backoff: `policy.schedule_next_run(success=False)`
+
+**Bot receives**:
+```json
+{
+  "job_id": "uuid",
+  "status": "failed",
+  "retry_count": 3,
+  "max_retries": 3,
+  "message": "Retries exhausted"
+}
+```
+
+#### 5. LOCKED → EXPIRED (Lock timeout)
+
+**Trigger**: Lock TTL exceeded without submit (bot crashed, network issue)
+
+**What happens**:
+1. Bot doesn't call submit within `lock_ttl_seconds` (default 600s)
+2. If bot tries to submit after TTL: `lock_expired` error returned
+3. System calls `job.mark_expired()`: clears lock, sets status='expired'
+4. Admin can manually reset to PENDING via Django Admin
+
+**Bot receives** (if attempting late submit):
+```json
+{
+  "success": false,
+  "error": "lock_expired",
+  "detail": "Lock TTL exceeded"
+}
+```
+
+### State Transition Summary
+
+| From | To | Trigger | Method Called |
+|------|------|---------|---------------|
+| PENDING | LOCKED | pull | `job.lock_for_bot(bot_id)` |
+| LOCKED | DONE | submit success=true | `job.mark_done()` |
+| LOCKED | PENDING | submit success=false (retries left) | `job.mark_failed(auto_retry=True)` |
+| LOCKED | FAILED | submit success=false (no retries) | `job.mark_failed(auto_retry=False)` |
+| LOCKED | EXPIRED | TTL exceeded | `job.mark_expired()` |
+
+### Internal State Properties
 
 ```python
-job.status  # 'pending', 'locked', 'done', 'failed', 'expired'
-job.locked_by  # Bot ID holding lock (if LOCKED)
-job.locked_at  # When lock was acquired (if LOCKED)
-job.lock_ttl_seconds  # Duration of lock (600)
-job.is_lock_expired()  # True if LOCKED and TTL exceeded
+# State constants
+CrawlJob.STATE_PENDING   # 'pending'
+CrawlJob.STATE_LOCKED    # 'locked'
+CrawlJob.STATE_DONE      # 'done'
+CrawlJob.STATE_FAILED    # 'failed'
+CrawlJob.STATE_EXPIRED   # 'expired'
+
+# Job instance properties
+job.status               # Current state string
+job.locked_by            # Bot ID holding lock (if LOCKED)
+job.locked_at            # When lock was acquired (datetime)
+job.lock_ttl_seconds     # Lock duration (default 600)
+job.retry_count          # Current retry attempts
+job.max_retries          # Max allowed retries
+job.last_error           # Last error message
+
+# Job methods
+job.is_lock_expired()    # True if LOCKED and TTL exceeded
+job.can_retry()          # True if retry_count < max_retries
+job.lock_for_bot(bot_id) # Attempt to acquire lock
+job.mark_done()          # Transition to DONE
+job.mark_failed(msg)     # Transition to FAILED/PENDING
+job.mark_expired()       # Transition to EXPIRED
 ```
 
 ---
@@ -577,27 +851,31 @@ Configurable via `policy.retry_backoff_minutes` (default 5).
 ### 1. Proper Error Handling
 
 ```python
+import os
 import requests
 import time
 from decimal import Decimal
 
-def crawl_and_submit(job_id, url, bot_id="bot-001"):
-    """
-    Execute crawl and submit result with proper error handling.
-    """
+BASE_URL = 'http://localhost:8005/api/crawl'
+BOT_ID = os.environ.get('BOT_ID', 'bot-001')
+API_TOKEN = os.environ.get('BOT_API_TOKEN', '')
+
+if not API_TOKEN:
+    raise SystemExit("BOT_API_TOKEN is required")
+
+
+def crawl_and_submit(job_id, url, bot_id=BOT_ID, api_token=API_TOKEN):
+    """Execute crawl and submit result with proper error handling."""
     try:
-        # Fetch URL with timeout
         response = requests.get(url, timeout=30)
         response.raise_for_status()
-        
-        # Parse and extract data
         price = Decimal(extract_price(response.text))
-        
-        # Submit result
+
         submit_result = requests.post(
-            'http://localhost:8000/api/crawl/submit/',
+            f"{BASE_URL}/submit/",
             json={
                 'bot_id': bot_id,
+                'api_token': api_token,
                 'job_id': str(job_id),
                 'success': True,
                 'price': float(price),
@@ -608,39 +886,36 @@ def crawl_and_submit(job_id, url, bot_id="bot-001"):
             },
             timeout=10
         )
-        
+
         if not submit_result.json().get('success'):
             raise Exception(f"Submit failed: {submit_result.json()}")
-        
+
         return True
-        
+
     except requests.Timeout:
-        # Network timeout - let bot retry with exponential backoff
-        submit_failure(job_id, bot_id, "Request timeout after 30s")
+        submit_failure(job_id, bot_id, api_token, "Request timeout after 30s")
         return False
-        
+
     except requests.HTTPError as e:
         if e.response.status_code in [404, 403]:
-            # Permanent error - don't retry
-            submit_failure(job_id, bot_id, f"HTTP {e.response.status_code}")
+            submit_failure(job_id, bot_id, api_token, f"HTTP {e.response.status_code}")
             return False
-        else:
-            # Temporary error - allow retry
-            submit_failure(job_id, bot_id, f"HTTP {e.response.status_code}")
-            return False
-            
+        submit_failure(job_id, bot_id, api_token, f"HTTP {e.response.status_code}")
+        return False
+
     except Exception as e:
-        submit_failure(job_id, bot_id, str(e))
+        submit_failure(job_id, bot_id, api_token, str(e))
         return False
 
 
-def submit_failure(job_id, bot_id, error_msg):
+def submit_failure(job_id, bot_id, api_token, error_msg):
     """Submit crawl failure."""
     try:
         requests.post(
-            'http://localhost:8000/api/crawl/submit/',
+            f"{BASE_URL}/submit/",
             json={
                 'bot_id': bot_id,
+                'api_token': api_token,
                 'job_id': str(job_id),
                 'success': False,
                 'error_msg': error_msg[:500],  # Truncate to 500 chars
@@ -671,19 +946,25 @@ signal.signal(signal.SIGINT, graceful_shutdown)
 ### 3. Monitoring & Logging
 
 ```python
+import os
 import logging
 import time
+import requests
 
 logger = logging.getLogger('crawl_bot')
 
-def pull_and_execute(bot_id):
+BASE_URL = 'http://localhost:8005/api/crawl'
+BOT_ID = os.environ.get('BOT_ID', 'bot-001')
+API_TOKEN = os.environ.get('BOT_API_TOKEN', '')
+
+def pull_and_execute(bot_id=BOT_ID, api_token=API_TOKEN):
     """Pull jobs and execute with logging."""
     start = time.time()
     
     # Pull
     pull_resp = requests.post(
-        'http://localhost:8000/api/crawl/pull/',
-        json={'bot_id': bot_id, 'max_jobs': 5},
+        f'{BASE_URL}/pull/',
+        json={'bot_id': bot_id, 'api_token': api_token, 'max_jobs': 5},
         timeout=10
     )
     
@@ -698,11 +979,7 @@ def pull_and_execute(bot_id):
     for job in jobs:
         job_start = time.time()
         try:
-            success = crawl_and_submit(
-                job['job_id'],
-                job['url'],
-                bot_id
-            )
+            success = crawl_and_submit(job['job_id'], job['url'], bot_id, api_token)
             duration = time.time() - job_start
             logger.info(f"Job {job['job_id']}: {success} ({duration:.2f}s)")
         except Exception as e:
@@ -716,9 +993,15 @@ def pull_and_execute(bot_id):
 ### 4. Rate Limiting
 
 ```python
+import os
 import time
+import requests
 
-def pull_with_backoff(bot_id, max_jobs=5):
+BASE_URL = 'http://localhost:8005/api/crawl'
+BOT_ID = os.environ.get('BOT_ID', 'bot-001')
+API_TOKEN = os.environ.get('BOT_API_TOKEN', '')
+
+def pull_with_backoff(bot_id=BOT_ID, api_token=API_TOKEN, max_jobs=5):
     """Pull with exponential backoff on failure."""
     wait = 1  # seconds
     max_wait = 60
@@ -726,8 +1009,12 @@ def pull_with_backoff(bot_id, max_jobs=5):
     while True:
         try:
             resp = requests.post(
-                'http://localhost:8000/api/crawl/pull/',
-                json={'bot_id': bot_id, 'max_jobs': max_jobs},
+                f'{BASE_URL}/pull/',
+                json={
+                    'bot_id': bot_id,
+                    'api_token': api_token,
+                    'max_jobs': max_jobs,
+                },
                 timeout=10
             )
             
@@ -748,26 +1035,36 @@ def pull_with_backoff(bot_id, max_jobs=5):
 ### 5. Handling Competitive Environment
 
 ```python
+import os
+import requests
+
+BASE_URL = 'http://localhost:8005/api/crawl'
+API_TOKEN = os.environ.get('BOT_API_TOKEN', '')
+
 def adaptive_pull(bot_id):
     """Adapt to competitive environment."""
     resp = requests.post(
-        'http://localhost:8000/api/crawl/pull/',
-        json={'bot_id': bot_id, 'max_jobs': 10},
+        f'{BASE_URL}/pull/',
+        json={
+            'bot_id': bot_id,
+            'api_token': API_TOKEN,
+            'max_jobs': 10,
+        },
         timeout=10
     )
-    
+
     data = resp.json()['data']
     jobs_assigned = data['count']
     jobs_skipped = data['skipped']
-    
+
     print(f"Assigned: {jobs_assigned}, Skipped: {jobs_skipped}")
-    
+
     # If many jobs are being skipped, reduce request size
     if jobs_skipped > jobs_assigned * 2:
         # Too much contention - try smaller batches
         print("High contention detected, reducing batch size")
-        return pull_with_max_jobs(bot_id, max_jobs=3)
-    
+        return pull_with_backoff(bot_id, API_TOKEN, max_jobs=3)
+
     return data['jobs']
 ```
 
@@ -783,10 +1080,16 @@ def adaptive_pull(bot_id):
 
 import requests
 import sys
+import os
 from decimal import Decimal
 
-BASE_URL = 'http://localhost:8000/api/crawl'
-BOT_ID = sys.argv[1] if len(sys.argv) > 1 else 'simple-bot-001'
+BASE_URL = 'http://localhost:8005/api/crawl'
+BOT_ID = sys.argv[1] if len(sys.argv) > 1 else 'bot-001'
+API_TOKEN = os.environ.get('BOT_API_TOKEN', '')  # Get from environment
+
+if not API_TOKEN:
+    print("Error: BOT_API_TOKEN environment variable not set")
+    sys.exit(1)
 
 def fetch_job(job_id, url):
     """Fetch URL and extract data."""
@@ -800,14 +1103,19 @@ def fetch_job(job_id, url):
 
 def main():
     while True:
-        # Pull jobs
+        # Pull jobs with authentication
         pull_resp = requests.post(
             f'{BASE_URL}/pull/',
-            json={'bot_id': BOT_ID, 'max_jobs': 1}
+            json={
+                'bot_id': BOT_ID,
+                'api_token': API_TOKEN,
+                'max_jobs': 1
+            }
         )
         
         if not pull_resp.ok:
-            print(f"Pull failed: {pull_resp.status_code}")
+            error = pull_resp.json()
+            print(f"Pull failed: {error.get('error')} - {error.get('detail')}")
             continue
         
         jobs = pull_resp.json()['data']['jobs']
@@ -822,11 +1130,12 @@ def main():
             try:
                 result = fetch_job(job['job_id'], job['url'])
                 
-                # Submit result
+                # Submit result with authentication
                 submit_resp = requests.post(
                     f'{BASE_URL}/submit/',
                     json={
                         'bot_id': BOT_ID,
+                        'api_token': API_TOKEN,
                         'job_id': job['job_id'],
                         'success': True,
                         'price': float(result['price']),
@@ -839,13 +1148,20 @@ def main():
                 if submit_resp.ok:
                     print(f"✓ Job {job['job_id']} completed")
                 else:
-                    print(f"✗ Submit failed: {submit_resp.json()}")
+                    error = submit_resp.json()
+                    print(f"✗ Submit failed: {error.get('error')} - {error.get('detail')}")
                     
             except Exception as e:
                 print(f"✗ Error: {e}")
 
 if __name__ == '__main__':
     main()
+```
+
+**Usage**:
+```bash
+export BOT_API_TOKEN="bot_bot-001_Xk5m_lJ9k8N..."
+python simple_bot.py bot-001
 ```
 
 ### Example 2: Parallel Bot with Thread Pool
@@ -857,11 +1173,13 @@ if __name__ == '__main__':
 import requests
 import concurrent.futures
 import threading
+import os
 from queue import Queue
 
-BOT_ID = 'parallel-bot-001'
+BOT_ID = 'bot-001'
+API_TOKEN = os.environ.get('BOT_API_TOKEN', '')
 WORKERS = 4
-BASE_URL = 'http://localhost:8000/api/crawl'
+BASE_URL = 'http://localhost:8005/api/crawl'
 
 job_queue = Queue()
 semaphore = threading.Semaphore(WORKERS)
@@ -882,11 +1200,12 @@ def worker():
                 import time
                 time.sleep(2)
                 
-                # Submit result
+                # Submit result with authentication
                 requests.post(
                     f'{BASE_URL}/submit/',
                     json={
                         'bot_id': BOT_ID,
+                        'api_token': API_TOKEN,
                         'job_id': job['job_id'],
                         'success': True,
                         'price': 99.99,
@@ -913,7 +1232,11 @@ def main():
         try:
             resp = requests.post(
                 f'{BASE_URL}/pull/',
-                json={'bot_id': BOT_ID, 'max_jobs': WORKERS * 2},
+                json={
+                    'bot_id': BOT_ID,
+                    'api_token': API_TOKEN,
+                    'max_jobs': WORKERS * 2
+                },
                 timeout=10
             )
             
@@ -937,6 +1260,29 @@ if __name__ == '__main__':
 ---
 
 ## Troubleshooting
+
+### Q: Authentication failed errors
+
+**Cause**: Missing or invalid bot_id/api_token
+
+**Solutions**:
+1. Go to Django Admin → Bot Configuration
+2. Find your bot and copy the API Token
+3. Set environment variable: `export BOT_API_TOKEN="your_token_here"`
+4. Verify bot is enabled in admin
+5. Check bot_id matches exactly (case-sensitive)
+
+### Q: Bot is disabled error
+
+**Cause**: Bot config has `enabled=False`
+
+**Solutions**:
+1. Go to Django Admin → Bot Configuration
+2. Find your bot
+3. Check "Enabled" checkbox
+4. Save
+
+---
 
 ### Q: Job stuck in LOCKED state
 
@@ -1021,6 +1367,60 @@ For questions or issues:
 
 ---
 
-**Last Updated**: 2025-01-07  
-**API Version**: 1.0  
-**Crawl Service Version**: 2.0 (State Machine)
+## Quick Reference Card
+
+### Bot Workflow Checklist
+
+```
+1. Setup:
+   □ Get bot_id from admin
+   □ Get api_token from admin
+   □ Set environment variable: export BOT_API_TOKEN="..."
+
+2. Pull Loop:
+   □ POST /api/crawl/pull/ with bot_id + api_token
+   □ Check response.success
+   □ Get jobs[] array from response.data
+   □ Note: skipped shows jobs locked by others
+
+3. Execute Each Job:
+   □ Parse job.url
+   □ Respect job.timeout_seconds (default 600s)
+   □ Track job.locked_until deadline
+   □ Extract price, currency, title, in_stock
+
+4. Submit Result:
+   □ POST /api/crawl/submit/ with bot_id + api_token + job_id
+   □ If success: include price, currency (required)
+   □ If failure: include error_msg (optional)
+   □ Check response for new status
+
+5. Handle Errors:
+   □ 401/403 → Check credentials
+   □ 400 job_not_locked → Job already processed
+   □ 403 not_assigned → Wrong bot_id
+   □ 400 lock_expired → Took too long
+```
+
+### State Quick Reference
+
+| State | Bot Can Pull? | Bot Can Submit? | Terminal? |
+|-------|---------------|-----------------|----------|
+| pending | ✅ Yes | ❌ No | No |
+| locked | ❌ No | ✅ Yes (owner only) | No |
+| done | ❌ No | ❌ No | ✅ Yes |
+| failed | ❌ No | ❌ No | ✅ Yes |
+| expired | ❌ No | ❌ No | Admin reset |
+
+### API Endpoints Summary
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|  
+| POST | `/api/crawl/pull/` | Get PENDING jobs, acquire locks |
+| POST | `/api/crawl/submit/` | Submit result, transition state |
+
+---
+
+**Last Updated**: 2026-01-07  
+**API Version**: 1.1  
+**Crawl Service Version**: 2.1 (State Machine with Authentication)

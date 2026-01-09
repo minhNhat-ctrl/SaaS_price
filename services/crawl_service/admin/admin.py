@@ -140,12 +140,14 @@ class CrawlPolicyAdmin(admin.ModelAdmin):
     
     def next_run_display(self, obj):
         """Display next run info"""
+        if not obj.next_run_at:
+            return "—"
         now = timezone.now()
         if obj.next_run_at <= now:
             return format_html('<span style="color: green; font-weight: bold;">Ready to run NOW</span>')
         delta = obj.next_run_at - now
         hours = delta.total_seconds() / 3600
-        return f"In {hours:.1f} hours"
+        return "In {:.1f} hours".format(hours)
     next_run_display.short_description = 'Next Run In'
     
     @admin.action(description="🔄 Sync Jobs for Selected Policies")
@@ -524,24 +526,33 @@ class CrawlResultAdmin(admin.ModelAdmin):
     
     list_display = (
         'job_url',
+        'job_status_badge',
+        'job_last_error',
         'price_display',
+        'price_sources_badge',
         'stock_badge',
         'crawled_ago',
         'created_at',
     )
     
     list_filter = ('currency', 'in_stock', 'created_at', 'crawled_at')
-    search_fields = ('job__url', 'title')
+    search_fields = ('job__product_url__normalized_url', 'job__locked_by', 'title')
     readonly_fields = (
         'id',
-        'job',
+        'job_display',
+        'price',
+        'currency',
+        'title',
+        'in_stock',
+        'crawled_at',
         'created_at',
         'parsed_data_display',
+        'raw_html',
     )
     
     fieldsets = (
         ('Result Identification', {
-            'fields': ('id', 'job', 'created_at')
+            'fields': ('id', 'job_display', 'created_at')
         }),
         ('Price Information', {
             'fields': ('price', 'currency')
@@ -559,13 +570,110 @@ class CrawlResultAdmin(admin.ModelAdmin):
     )
     
     ordering = ['-created_at']
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        return qs.select_related('job', 'job__product_url')
     
     def job_url(self, obj):
         """Display job URL from ProductURL"""
-        if obj.job.product_url:
+        if obj.job and obj.job.product_url:
             return obj.job.product_url.normalized_url[:60]
         return '—'
     job_url.short_description = 'URL'
+
+    def job_display(self, obj):
+        """Display job with link to detail page"""
+        if not obj.job:
+            return '—'
+        url = reverse('admin:crawl_service_crawljob_change', args=[obj.job.id])
+        job_url = obj.job.product_url.normalized_url[:50] if obj.job.product_url else 'N/A'
+        status_emoji = {
+            'pending': '⏳',
+            'locked': '🔒',
+            'done': '✓',
+            'failed': '✗',
+            'expired': '⏱️'
+        }.get(obj.job.status, '?')
+        return format_html(
+            '<a href="{}">{} {} ({})</a>',
+            url,
+            status_emoji,
+            job_url,
+            obj.job.status
+        )
+    job_display.short_description = 'Job'
+
+    def price_sources_badge(self, obj):
+        """Display price extraction sources with confidence for ML"""
+        if not obj.parsed_data:
+            return '—'
+        
+        pd = obj.parsed_data
+        price_sources = pd.get('price_sources', [])
+        price_extraction = pd.get('price_extraction', {})
+        
+        if not price_sources:
+            return format_html('<span style="color:#999;">No sources</span>')
+        
+        # Source mapping to extraction keys
+        source_map = {
+            'jsonld': ('extract_price_from_jsonld', '#4CAF50', 'JSON-LD'),
+            'og': ('extract_price_from_og', '#2196F3', 'OG'),
+            'microdata': ('extract_price_from_microdata', '#9C27B0', 'Micro'),
+            'script_data': ('extract_price_from_script_data', '#FF9800', 'Script'),
+            'html_ml': ('extract_price_from_html_ml', '#E91E63', 'ML'),
+        }
+        
+        badges = []
+        for source in price_sources:
+            if source not in source_map:
+                badges.append('<span style="background:#777;color:white;padding:2px 6px;border-radius:3px;margin-right:3px;font-size:11px;">{}</span>'.format(source))
+                continue
+                
+            extract_key, color, label = source_map[source]
+            
+            # Get confidence for ML source
+            if source == 'html_ml' and extract_key in price_extraction:
+                confidence = price_extraction[extract_key].get('confidence', 0.0)
+                badges.append(
+                    '<span style="background:{};color:white;padding:2px 6px;border-radius:3px;margin-right:3px;font-size:11px;font-weight:bold;">{} {:.3f}</span>'.format(
+                        color, label, confidence
+                    )
+                )
+            else:
+                badges.append(
+                    '<span style="background:{};color:white;padding:2px 6px;border-radius:3px;margin-right:3px;font-size:11px;">{}</span>'.format(
+                        color, label
+                    )
+                )
+        
+        return format_html(''.join(badges))
+    price_sources_badge.short_description = 'Sources'
+
+    def job_status_badge(self, obj):
+        """Display job status badge"""
+        status_colors = {
+            'pending': ('⏳ Pending', '#2196F3'),
+            'locked': ('🔒 Locked', '#FF9800'),
+            'done': ('✓ Done', '#4CAF50'),
+            'failed': ('✗ Failed', '#F44336'),
+            'expired': ('⏱️ Expired', '#E91E63'),
+        }
+        label, color = status_colors.get(obj.job.status, ('Unknown', '#9E9E9E'))
+        return format_html(
+            '<span style="background:{};color:white;padding:2px 6px;border-radius:3px;">{}</span>',
+            color,
+            label,
+        )
+    job_status_badge.short_description = 'Job Status'
+
+    def job_last_error(self, obj):
+        """Show last error from job"""
+        if not obj.job.last_error:
+            return '—'
+        return obj.job.last_error[:120]
+    job_last_error.short_description = 'Last Error'
     
     def price_display(self, obj):
         """Display price with currency"""
@@ -593,13 +701,125 @@ class CrawlResultAdmin(admin.ModelAdmin):
     crawled_ago.short_description = 'Crawled'
     
     def parsed_data_display(self, obj):
-        """Display parsed data as formatted JSON"""
+        """Display parsed data with detailed price extraction sources"""
         if not obj.parsed_data:
             return "No data"
-        html = '<pre style="background: #f5f5f5; padding: 10px; border-radius: 3px;">'
-        html += json.dumps(obj.parsed_data, indent=2, ensure_ascii=False)
-        html += '</pre>'
-        return format_html(html)
+
+        pd = obj.parsed_data or {}
+        price = pd.get('price') or pd.get('price_value')
+        currency = pd.get('currency') or pd.get('currency_code')
+        price_formatted = pd.get('price_formatted')
+        confidence = pd.get('confidence')
+        price_sources = pd.get('price_sources') or []
+        price_extraction = pd.get('price_extraction') or {}
+        source_url = pd.get('source_url')
+
+        parts = []
+        parts.append('<div style="background:#f8f9fa;border:1px solid #e0e0e0;border-radius:6px;padding:12px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">')
+        
+        # Summary section
+        parts.append('<div style="margin-bottom:12px;padding-bottom:10px;border-bottom:2px solid #e0e0e0;">')
+        parts.append('<h4 style="margin:0 0 8px 0;color:#333;">📊 Extraction Summary</h4>')
+        
+        if price is not None:
+            parts.append('<span style="background:#4CAF50;color:white;padding:4px 8px;border-radius:4px;font-weight:bold;">💰 {}</span>'.format(price))
+        if currency:
+            parts.append('<span style="background:#2196F3;color:white;padding:4px 8px;border-radius:4px;margin-left:6px;font-weight:bold;">💱 {}</span>'.format(currency))
+        if price_formatted:
+            parts.append('<span style="background:#607D8B;color:white;padding:4px 8px;border-radius:4px;margin-left:6px;">🧾 {}</span>'.format(price_formatted))
+        if confidence is not None:
+            conf_color = '#4CAF50' if confidence >= 0.85 else '#FF9800' if confidence >= 0.5 else '#F44336'
+            parts.append('<span style="background:{};color:white;padding:4px 8px;border-radius:4px;margin-left:6px;font-weight:bold;">🔬 {:.4f}</span>'.format(conf_color, confidence))
+        
+        if price_sources:
+            parts.append('<div style="margin-top:8px;color:#555;font-size:13px;">')
+            parts.append('<b>Active sources:</b> ')
+            for src in price_sources:
+                parts.append('<code style="background:#E3F2FD;color:#1976D2;padding:2px 6px;border-radius:3px;margin-right:4px;">{}</code>'.format(src))
+            parts.append('</div>')
+        
+        if source_url:
+            parts.append('<div style="margin-top:6px;color:#777;font-size:12px;">🔗 {}</div>'.format(source_url[:80]))
+        
+        parts.append('</div>')
+
+        # Detailed extraction sources
+        if price_extraction:
+            parts.append('<div style="margin-top:12px;">')
+            parts.append('<h4 style="margin:0 0 10px 0;color:#333;">🔍 Price Extraction Details</h4>')
+            
+            # Source display order and labels
+            source_info = [
+                ('extract_price_from_jsonld', 'JSON-LD', '🏆', '#4CAF50'),
+                ('extract_price_from_og', 'Open Graph', '🌐', '#2196F3'),
+                ('extract_price_from_microdata', 'Microdata', '📋', '#9C27B0'),
+                ('extract_price_from_script_data', 'Script Data', '📜', '#FF9800'),
+                ('extract_price_from_html_ml', 'HTML ML', '🤖', '#E91E63'),
+            ]
+            
+            for source_key, label, emoji, color in source_info:
+                if source_key not in price_extraction:
+                    continue
+                    
+                data = price_extraction[source_key]
+                src_price = data.get('price')
+                src_currency = data.get('currency')
+                src_confidence = data.get('confidence', 0.0)
+                
+                # Determine if source found data
+                has_data = src_price is not None and src_price != 0
+                bg_color = '#fff' if has_data else '#f5f5f5'
+                border_color = color if has_data else '#ddd'
+                
+                parts.append('<div style="background:{};border-left:4px solid {};padding:8px 10px;margin-bottom:8px;border-radius:4px;">'.format(bg_color, border_color))
+                parts.append('<div style="display:flex;align-items:center;justify-content:space-between;">')
+                
+                # Source name
+                parts.append('<div style="flex:1;">')
+                parts.append('<span style="font-weight:bold;color:{};font-size:14px;">{} {}</span>'.format(color, emoji, label))
+                parts.append('</div>')
+                
+                # Data values
+                parts.append('<div style="flex:2;text-align:right;">')
+                if has_data:
+                    parts.append('<span style="color:#333;font-weight:bold;margin-right:12px;">{} {}</span>'.format(
+                        src_price if src_price else '—',
+                        src_currency if src_currency else ''
+                    ))
+                    # Confidence badge
+                    if src_confidence >= 0.85:
+                        conf_badge_color = '#4CAF50'
+                        conf_label = 'High'
+                    elif src_confidence >= 0.5:
+                        conf_badge_color = '#FF9800'
+                        conf_label = 'Medium'
+                    else:
+                        conf_badge_color = '#F44336'
+                        conf_label = 'Low'
+                    parts.append('<span style="background:{};color:white;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:bold;">{} ({:.4f})</span>'.format(
+                        conf_badge_color, conf_label, src_confidence
+                    ))
+                else:
+                    parts.append('<span style="color:#999;font-style:italic;">No data</span>')
+                    if src_confidence == 0.0:
+                        parts.append('<span style="background:#E0E0E0;color:#666;padding:2px 8px;border-radius:12px;font-size:11px;margin-left:8px;">0.0000</span>')
+                
+                parts.append('</div>')
+                parts.append('</div>')
+                parts.append('</div>')
+            
+            parts.append('</div>')
+
+        # Full JSON (collapsed)
+        parts.append('<details style="margin-top:12px;">')
+        parts.append('<summary style="cursor:pointer;color:#1976D2;font-weight:bold;font-size:13px;">📄 View Full JSON</summary>')
+        parts.append('<pre style="margin-top:8px;background:#263238;color:#AED581;padding:12px;border-radius:4px;overflow-x:auto;font-size:12px;">{}</pre>'.format(
+            json.dumps(pd, indent=2, ensure_ascii=False)
+        ))
+        parts.append('</details>')
+        
+        parts.append('</div>')
+        return format_html(''.join(parts))
     parsed_data_display.short_description = 'Parsed Data'
     
     def has_add_permission(self, request):
@@ -618,6 +838,7 @@ class BotConfigAdmin(admin.ModelAdmin):
         'bot_status_badge',
         'bot_id',
         'name',
+        'token_preview',
         'max_jobs_per_pull',
         'custom_ttl_display',
         'success_rate_display',
@@ -629,6 +850,7 @@ class BotConfigAdmin(admin.ModelAdmin):
     search_fields = ('bot_id', 'name', 'description')
     readonly_fields = (
         'id',
+        'token_display',
         'total_jobs_pulled',
         'total_jobs_completed',
         'total_jobs_failed',
@@ -644,7 +866,8 @@ class BotConfigAdmin(admin.ModelAdmin):
             'fields': ('id', 'bot_id', 'name', 'description')
         }),
         ('Authentication', {
-            'fields': ('api_token', 'enabled')
+            'fields': ('token_display', 'enabled'),
+            'description': 'API Token is auto-generated. Use "Regenerate API Token" action to create new token.'
         }),
         ('Configuration', {
             'fields': (
@@ -713,26 +936,66 @@ class BotConfigAdmin(admin.ModelAdmin):
         else:
             color = '#dc3545'  # Red
         
+        rate_formatted = "{:.1f}".format(rate)
         return format_html(
             '<span style="background: {}; color: white; padding: 2px 8px; '
-            'border-radius: 3px; font-weight: bold;">{:.1f}%</span>',
-            color, rate
+            'border-radius: 3px; font-weight: bold;">{}%</span>',
+            color, rate_formatted
         )
     success_rate_display.short_description = 'Success Rate'
     
     def stats_display(self, obj):
         """Display job statistics"""
+        completed = obj.total_jobs_completed
+        failed = obj.total_jobs_failed
+        total = obj.total_jobs_pulled
         return format_html(
             '<span style="color: #28a745;">✓ {}</span> | '
             '<span style="color: #dc3545;">✗ {}</span> | '
             '<span style="color: #6c757d;">Total: {}</span>',
-            obj.total_jobs_completed,
-            obj.total_jobs_failed,
-            obj.total_jobs_pulled
+            completed,
+            failed,
+            total
         )
     stats_display.short_description = 'Stats (✓/✗/Total)'
     
-    actions = ['enable_bots', 'disable_bots', 'reset_stats']
+    def token_preview(self, obj):
+        """Show truncated token in list view"""
+        if not obj.api_token:
+            return format_html('<span style="color: #dc3545;">Not set</span>')
+        
+        token_preview = obj.api_token[:20] + '...'
+        return format_html(
+            '<code style="background: #f8f9fa; padding: 2px 6px; border-radius: 3px;">{}</code>',
+            token_preview
+        )
+    token_preview.short_description = 'API Token'
+    
+    def token_display(self, obj):
+        """Show full token in detail view with copy button"""
+        if not obj.api_token:
+            return format_html(
+                '<span style="color: #dc3545; font-weight: bold;">⚠ No API Token Set</span><br>'
+                '<small>Token will be auto-generated on save</small>'
+            )
+        
+        return format_html(
+            '<div style="background: #f8f9fa; padding: 10px; border-radius: 4px; border: 1px solid #dee2e6;">'
+            '<code style="font-size: 14px; word-break: break-all;">{}</code>'
+            '<br><br>'
+            '<button type="button" onclick="navigator.clipboard.writeText(\'{}\'); '
+            'alert(\'Token copied to clipboard!\');" '
+            'style="background: #007bff; color: white; border: none; padding: 6px 12px; '
+            'border-radius: 4px; cursor: pointer;">📋 Copy Token</button>'
+            '<br><small style="color: #6c757d; margin-top: 8px; display: block;">'
+            'Use "Regenerate API Token" action to create a new token (invalidates old one)</small>'
+            '</div>',
+            obj.api_token,
+            obj.api_token
+        )
+    token_display.short_description = 'API Token'
+    
+    actions = ['enable_bots', 'disable_bots', 'reset_stats', 'regenerate_token']
     
     def enable_bots(self, request, queryset):
         """Enable selected bots"""
@@ -757,6 +1020,25 @@ class BotConfigAdmin(admin.ModelAdmin):
             bot.save()
         self.message_user(request, f'Statistics reset for {queryset.count()} bot(s)')
     reset_stats.short_description = 'Reset statistics'
+    
+    def regenerate_token(self, request, queryset):
+        """Regenerate API tokens for selected bots"""
+        import secrets
+        count = 0
+        for bot in queryset:
+            # Generate new token
+            bot.api_token = f"bot_{bot.bot_id}_{secrets.token_urlsafe(32)}"
+            bot.save(update_fields=['api_token'])
+            count += 1
+            logger.info(f"Regenerated API token for bot: {bot.bot_id}")
+        
+        self.message_user(
+            request,
+            f'API tokens regenerated for {count} bot(s). '
+            'Old tokens are now invalid. Update bots with new tokens.',
+            level='WARNING'
+        )
+    regenerate_token.short_description = '🔄 Regenerate API Token (invalidates old token)'
 
 
 # Register models to CustomAdminSite (hash-protected)

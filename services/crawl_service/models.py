@@ -410,7 +410,8 @@ class CrawlResult(models.Model):
         ordering = ['-created_at']
     
     def __str__(self):
-        return f"{self.price} {self.currency} - {self.job.url[:50]}"
+        url = self.job.product_url.normalized_url if self.job and self.job.product_url else 'N/A'
+        return f"{self.price} {self.currency} - {url[:50]}"
     
     def get_price_info(self) -> dict:
         """Return price info as dict."""

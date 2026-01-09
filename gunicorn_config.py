@@ -4,8 +4,8 @@ Gunicorn Configuration for PriceSynC SaaS App
 import multiprocessing
 import os
 
-# Server socket - ONLY localhost, không public ra internet
-bind = '127.0.0.1:8005'
+# Server socket - bind to all interfaces for public access
+bind = '0.0.0.0:8005'
 backlog = 2048
 
 # Worker processes

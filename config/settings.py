@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-w3dfdg7qyqvp=vx(9x=ojw50fhxdpzn16!aow3!rp=*qe^pajh
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['dj.2kvietnam.com', 'app.2kvietnam.com', 'localhost', '127.0.0.1', 'testserver']
+ALLOWED_HOSTS = ['dj.2kvietnam.com', 'app.2kvietnam.com', 'localhost', '127.0.0.1', 'testserver', '160.191.244.249']
 
 # Frontend URL for email links
 FRONTEND_URL = 'http://localhost:3000'  # Change in production
@@ -37,6 +37,7 @@ CSRF_TRUSTED_ORIGINS = [
     'https://dj.2kvietnam.com',
     'http://localhost:8005',
     'http://127.0.0.1:8005',
+    'http://160.191.244.249:8005',
 ]
 
 # Session Configuration
