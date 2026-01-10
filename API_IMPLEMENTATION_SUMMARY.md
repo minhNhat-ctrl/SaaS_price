@@ -364,6 +364,161 @@
 
 ---
 
+### 6. Products Shared Module API ✅ (Price History - New)
+
+**Location:** `services/products_shared/api/views.py`
+
+**Endpoints:**
+
+#### Price History Management
+
+- `GET /api/products/<product_id>/prices/?url_hash=<hash>` - Get price history for URL
+  - Query params: `?url_hash=<url_hash>&limit=100` (required: url_hash)
+  - Response: 
+  ```json
+  {
+    "success": true,
+    "data": {
+      "product_url": {
+        "url_hash": "0882998e3c8cbf2f53bacf10603d17829ec30b98af1e77c6c27a01f5ad543754",
+        "normalized_url": "https://example.com/product/test-123",
+        "domain": "example.com"
+      },
+      "prices": [
+        {
+          "id": "cd35a0a2-1754-41de-8fbf-405ab2b94306",
+          "price": 99.99,
+          "currency": "USD",
+          "original_price": null,
+          "is_available": true,
+          "stock_status": "",
+          "source": "CRAWLER",
+          "scraped_at": "2026-01-10T03:28:09.988802+00:00",
+          "created_at": "2026-01-10T03:28:09.988802+00:00"
+        }
+      ],
+      "count": 1
+    }
+  }
+  ```
+
+- `POST /api/products/<product_id>/prices/` - Record new price for URL
+  - Body: 
+  ```json
+  {
+    "url_hash": "0882998e3c8cbf2f53bacf10603d17829ec30b98af1e77c6c27a01f5ad543754",
+    "price": 99.99,
+    "currency": "USD",
+    "original_price": null,
+    "is_available": true,
+    "stock_status": "in_stock",
+    "stock_quantity": null,
+    "source": "MANUAL"
+  }
+  ```
+  - Response (201 Created):
+  ```json
+  {
+    "success": true,
+    "data": {
+      "id": "cd35a0a2-1754-41de-8fbf-405ab2b94306",
+      "product_url": "0882998e3c8cbf2f53bacf10603d17829ec30b98af1e77c6c27a01f5ad543754",
+      "price": 99.99,
+      "currency": "USD",
+      "is_available": true,
+      "source": "MANUAL",
+      "scraped_at": "2026-01-10T03:28:09.988802+00:00"
+    }
+  }
+  ```
+
+#### Product URL Management
+
+- `GET /api/products/<product_id>/urls/` - List all product URLs
+  - Query params: `?domain=example.com` (optional domain filter)
+  - Response:
+  ```json
+  {
+    "success": true,
+    "data": {
+      "urls": [
+        {
+          "url_hash": "0882998e3c8cbf2f53bacf10603d17829ec30b98af1e77c6c27a01f5ad543754",
+          "normalized_url": "https://example.com/product/test-123",
+          "raw_url": "https://example.com/product/test-123",
+          "domain": "example.com",
+          "is_active": true,
+          "created_at": "2026-01-10T03:27:29.479000+00:00"
+        }
+      ],
+      "count": 1
+    }
+  }
+  ```
+
+- `POST /api/products/<product_id>/urls/` - Add new product URL
+  - Body:
+  ```json
+  {
+    "raw_url": "https://example.com/product/test-456",
+    "domain": "example.com"
+  }
+  ```
+  - Response (201 Created or 200 OK if exists):
+  ```json
+  {
+    "success": true,
+    "data": {
+      "url": {
+        "url_hash": "abc123...",
+        "raw_url": "https://example.com/product/test-456",
+        "normalized_url": "https://example.com/product/test-456",
+        "domain": "example.com",
+        "is_active": true,
+        "created": true
+      }
+    }
+  }
+  ```
+
+**Features:**
+- Price history tracking per product URL
+- Source tracking (CRAWLER, MANUAL, API, IMPORT)
+- Stock availability tracking
+- Currency support (USD, JPY, VND, etc.)
+- URL management with domain auto-extraction
+- Automatic deduplication of URLs
+- Append-only price history (no updates/deletes)
+- Time-series data ready for analytics
+
+**Data Model - PriceHistory (Public Schema):**
+```json
+{
+  "id": "uuid",
+  "product_url": "url_hash",
+  "price": 99.99,
+  "currency": "USD",
+  "original_price": null,
+  "is_available": true,
+  "stock_status": "in_stock",
+  "stock_quantity": 10,
+  "source": "CRAWLER",
+  "scraped_at": "2026-01-10T03:28:09.988802+00:00",
+  "created_at": "2026-01-10T03:28:09.988802+00:00"
+}
+```
+
+**Auto-Recording from Crawl Service:**
+- When bot submits successful crawl result via `POST /api/crawl/submit/` with `success=true`
+- Price automatically recorded to PriceHistory if:
+  - ✅ `success=true` in request
+  - ✅ `price` is provided and >= 0
+  - ✅ `product_url` exists for the job
+- Failed jobs or missing price: **no record created**
+- Source auto-set to `CRAWLER` for bot submissions
+
+---
+
 ### 6. API Configuration & Routes ✅
 
 **Main URLs:** `config/urls.py`
@@ -372,6 +527,8 @@ urlpatterns = [
     path('api/tenants/', include('core.tenants.urls')),
     path('api/access/', include('core.access.urls')),
     path('api/products/', include('services.products.api.urls')),
+    path('api/', include('services.products_shared.api.urls')),  # Price history & URLs
+    path('api/crawl/', include('services.crawl_service.api.urls')),  # Bot crawl endpoints
 ]
 ```
 
@@ -385,9 +542,17 @@ urlpatterns = [
     # Product URL Management
     path('<uuid:product_id>/urls/', ProductURLListView.as_view()),
     path('<uuid:product_id>/urls/<str:url_hash>/', ProductURLDetailView.as_view()),
+]
+```
+
+**Products Shared URLs:** `services/products_shared/api/urls.py`
+```python
+urlpatterns = [
+    # Price history endpoints
+    path('products/<str:product_id>/prices/', ProductPriceHistoryView.as_view(), name='product-prices'),
     
-    # Price History
-    path('<uuid:product_id>/prices/', PriceHistoryView.as_view()),
+    # Product URL endpoints
+    path('products/<str:product_id>/urls/', ProductURLView.as_view(), name='product-urls'),
 ]
 ```
 
@@ -502,6 +667,9 @@ Added comprehensive sections:
 - ✅ Product URLs management working
 - ✅ Price history tracking working
 - ✅ Multi-tenant product isolation verified
+- ✅ Products Shared API (Price History & URLs) fully functional
+- ✅ Price history auto-recorded from crawl service bot submissions
+- ✅ Manual price recording via API working
 
 **Partial:**
 - ⚠️ Access API endpoints created but repositories stubbed
@@ -681,21 +849,32 @@ python3.9 manage.py shell < test_tenant_api_client.py
   - POST /api/products/<pid>/urls/?tenant_id=<tid> - 201 Created ✅
   - GET /api/products/<pid>/urls/?tenant_id=<tid> - 200 OK ✅
   - DELETE /api/products/<pid>/urls/<hash>/?tenant_id=<tid> - 200 OK ✅
+
+✓ Price History API (Products Shared Module - New)
+  - GET /api/products/<product_id>/prices/?url_hash=<hash> - 200 OK ✅
+  - POST /api/products/<product_id>/prices/ - 201 Created ✅
+  
+✓ Price History Auto-Recording (Crawl Service Integration)
+  - POST /api/crawl/submit/ with success=true → Auto-record to PriceHistory ✅
+  - Failed jobs → No PriceHistory record ✅
+  - Missing price → No PriceHistory record ✅
 ```
 
 ---
 
-**Last Updated:** 2026-01-05  
+**Last Updated:** 2026-01-10  
 **Architecture Status:** STABLE ✅  
-**API Version:** 2.0.0
+**API Version:** 2.1.0 (Added Price History APIs)
 
 **Summary:**
-- ✅ 5 modules fully functional (Identity, Accounts, Tenants, Access, Products)
+- ✅ 6 modules fully functional (Identity, Accounts, Tenants, Access, Products, Products Shared)
 - ✅ Products module refactored for proper multi-tenant data separation
 - ✅ Shared data (ProductURL, PriceHistory) in PUBLIC schema
 - ✅ Tenant data (Product, ProductURLMapping) in TENANT schema
 - ✅ Cross-schema reference via url_hash (not FK)
 - ✅ URL deduplication and reference counting working
+- ✅ Price history APIs fully implemented with auto-recording from crawl service
 - ✅ Multi-tenant architecture verified
-- ✅ Gunicorn stable on port 8005
+- ✅ Gunicorn stable on port 8005 (public access 0.0.0.0:8005)
 - ✅ Ready for frontend integration
+- ✅ 158+ price history records successfully tracked

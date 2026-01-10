@@ -25,6 +25,7 @@ from decimal import Decimal
 import logging
 
 from ..models import CrawlJob, CrawlPolicy, CrawlResult
+from services.products_shared.infrastructure.django_models import PriceHistory
 from .serializers import (
     BotPullRequestSerializer,
     JobResponseSerializer,
@@ -309,6 +310,25 @@ class BotSubmitResultView(APIView):
                 logger.info(
                     f"Job {job_id} completed: {result.price} {result.currency} by {bot_id}"
                 )
+
+                # Append price history for successful crawls
+                try:
+                    if job.product_url and result.price is not None:
+                        PriceHistory.objects.create(
+                            product_url=job.product_url,
+                            price=result.price,
+                            currency=result.currency,
+                            original_price=None,
+                            is_available=result.in_stock,
+                            stock_status='in_stock' if result.in_stock else 'out_of_stock',
+                            stock_quantity=None,
+                            source='CRAWLER',
+                            scraped_at=result.crawled_at or timezone.now(),
+                        )
+                except Exception as e:
+                    logger.error(
+                        "PriceHistory append failed for job %s: %s", job_id, str(e), exc_info=True
+                    )
                 
                 return Response({
                     'success': True,
