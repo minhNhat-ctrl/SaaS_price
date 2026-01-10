@@ -539,3 +539,180 @@ class BotConfig(models.Model):
         if total == 0:
             return 0.0
         return (self.total_jobs_completed / total) * 100
+
+
+class CrawlCacheConfig(models.Model):
+    """
+    Cache Configuration - Redis settings for crawl service.
+    
+    Admin-configurable Redis connection and cache behavior.
+    Only one config can be active at a time (singleton pattern).
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    SERVICE_CHOICES = (
+        ("primary", "Primary Cache"),
+        ("secondary", "Secondary Cache"),
+        ("products", "Products Cache"),
+    )
+
+    # Fixed slot for cache service (max 3 instances)
+    service_key = models.CharField(
+        max_length=50,
+        choices=SERVICE_CHOICES,
+        default="primary",
+        unique=True,
+        db_index=True,
+        help_text="Fixed cache slot (max 3 predefined services)"
+    )
+
+    # Display name
+    name = models.CharField(
+        max_length=255,
+        default="Default Cache Config",
+        help_text="Configuration name for identification"
+    )
+    
+    # Redis connection settings
+    redis_host = models.CharField(
+        max_length=255,
+        default="localhost",
+        help_text="Redis server hostname or IP"
+    )
+    redis_port = models.IntegerField(
+        default=6379,
+        help_text="Redis server port"
+    )
+    redis_db = models.IntegerField(
+        default=0,
+        help_text="Redis database number (0-15)"
+    )
+    redis_password = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Redis password (optional)"
+    )
+    
+    # Cache behavior
+    enabled = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Enable/disable caching globally"
+    )
+    default_ttl_seconds = models.IntegerField(
+        default=300,
+        help_text="Default TTL for cache entries (seconds)"
+    )
+    
+    # Cache strategies
+    cache_pending_jobs = models.BooleanField(
+        default=True,
+        help_text="Cache pending jobs list for /pull/ endpoint"
+    )
+    cache_job_details = models.BooleanField(
+        default=True,
+        help_text="Cache individual job details"
+    )
+    cache_product_urls = models.BooleanField(
+        default=True,
+        help_text="Cache ProductURL data"
+    )
+    
+    # TTL overrides
+    pending_jobs_ttl_seconds = models.IntegerField(
+        default=60,
+        help_text="TTL for pending jobs list cache"
+    )
+    job_details_ttl_seconds = models.IntegerField(
+        default=600,
+        help_text="TTL for job details cache"
+    )
+    product_urls_ttl_seconds = models.IntegerField(
+        default=1800,
+        help_text="TTL for product URL cache (30 min)"
+    )
+    
+    # Status tracking
+    is_active = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Is this the active configuration? (only one can be active)"
+    )
+    last_connection_test = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last successful connection test"
+    )
+    connection_status = models.CharField(
+        max_length=50,
+        default="untested",
+        choices=[
+            ('untested', 'Untested'),
+            ('connected', 'Connected'),
+            ('failed', 'Connection Failed'),
+        ],
+        help_text="Current connection status"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'crawl_cache_config'
+        verbose_name = 'Cache Configuration'
+        verbose_name_plural = 'Cache Configurations'
+        ordering = ['-is_active', '-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['service_key'], name='uniq_cache_service_key'),
+        ]
+    
+    def __str__(self):
+        status = '✓' if self.is_active else '✗'
+        enabled = '🟢' if self.enabled else '🔴'
+        return f"{status} {enabled} [{self.service_key}] {self.name} ({self.redis_host}:{self.redis_port})"
+    
+    def save(self, *args, **kwargs):
+        """Ensure only one config is active at a time"""
+        if self.is_active:
+            # Deactivate all other configs
+            CrawlCacheConfig.objects.filter(is_active=True).update(is_active=False)
+        super().save(*args, **kwargs)
+    
+    @classmethod
+    def get_active_config(cls):
+        """Get the currently active cache configuration"""
+        try:
+            return cls.objects.filter(is_active=True, enabled=True).first()
+        except cls.DoesNotExist:
+            return None
+    
+    def test_connection(self) -> tuple[bool, str]:
+        """
+        Test Redis connection.
+        
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        try:
+            import redis
+            client = redis.Redis(
+                host=self.redis_host,
+                port=self.redis_port,
+                db=self.redis_db,
+                password=self.redis_password or None,
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
+            client.ping()
+
+            self.connection_status = 'connected'
+            self.last_connection_test = timezone.now()
+            self.save(update_fields=['connection_status', 'last_connection_test'])
+
+            return True, f"Connected to Redis {self.redis_host}:{self.redis_port}"
+
+        except Exception as exc:
+            self.connection_status = 'failed'
+            self.save(update_fields=['connection_status'])
+            return False, f"Connection failed: {exc.__class__.__name__}: {exc}"

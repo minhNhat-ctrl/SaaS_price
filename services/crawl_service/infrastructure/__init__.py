@@ -1,13 +1,10 @@
 """
-Infrastructure Layer
+Infrastructure Layer - Framework Integrations
+
+Django models, external service adapters, Redis cache.
 """
 
-from .django_models import CrawlJobModel, CrawlTaskModel, CrawlResultModel
-from .scheduler import CrawlScheduler
+# No automatic imports - import explicitly where needed to avoid circular dependencies
 
-__all__ = [
-    'CrawlJobModel',
-    'CrawlTaskModel',
-    'CrawlResultModel',
-    'CrawlScheduler',
-]
+__all__ = []
+

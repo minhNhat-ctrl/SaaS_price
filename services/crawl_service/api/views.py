@@ -13,6 +13,11 @@ Authentication:
   All endpoints require:
   - bot_id: bot identifier from BotConfig
   - api_token: API token from BotConfig
+
+Caching:
+  - Pending jobs list cached to reduce DB load for /pull/
+  - Job details cached for faster /submit/ lookups
+  - Cache invalidation on state changes
 """
 
 from rest_framework.views import APIView
@@ -32,6 +37,8 @@ from .serializers import (
     ResultResponseSerializer,
 )
 from .auth import authenticate_bot, auth_error_response
+from ..infrastructure.redis_adapter import get_cache_service
+from ..domain.cache_service import CacheKeyBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -106,25 +113,73 @@ class BotPullJobsView(APIView):
             # Update bot stats
             bot_config.increment_pull()
             
-            # Query PENDING jobs (not yet locked)
-            jobs_qs = CrawlJob.objects.select_related('product_url', 'product_url__domain').filter(
-                status=CrawlJob.STATE_PENDING
-            )
+            # === CACHE LAYER: Try to get pending jobs from cache ===
+            cache = get_cache_service()
+            cache_key = CacheKeyBuilder.pending_jobs(domain=domain)
+            cached_jobs = None
             
-            # Filter by domain if provided
-            if domain:
-                jobs_qs = jobs_qs.filter(product_url__domain__name__icontains=domain)
+            try:
+                cached_jobs = cache.get(cache_key)
+                if cached_jobs:
+                    logger.debug(f"Cache HIT for pending jobs: {cache_key}")
+            except Exception as e:
+                logger.warning(f"Cache read error: {e}")
             
-            # Order by priority DESC, created_at ASC
-            jobs_qs = jobs_qs.order_by('-priority', 'created_at')[:max_jobs]
+            # If cache miss or disabled, query database
+            if cached_jobs is None:
+                logger.debug(f"Cache MISS for pending jobs: {cache_key}")
+                
+                # Query PENDING jobs (not yet locked)
+                jobs_qs = CrawlJob.objects.select_related('product_url', 'product_url__domain').filter(
+                    status=CrawlJob.STATE_PENDING
+                )
+                
+                # Filter by domain if provided
+                if domain:
+                    jobs_qs = jobs_qs.filter(product_url__domain__name__icontains=domain)
+                
+                # Order by priority DESC, created_at ASC
+                jobs_qs = jobs_qs.order_by('-priority', 'created_at')[:max_jobs * 3]  # Fetch more for cache
+                
+                # Build job list for cache
+                jobs_list = list(jobs_qs)
+                
+                # Cache the result (with short TTL for pending jobs)
+                try:
+                    cache.set(cache_key, [
+                        {
+                            'id': str(job.id),
+                            'url': job.product_url.normalized_url,
+                            'priority': job.priority,
+                            'max_retries': job.max_retries,
+                            'timeout': job.lock_ttl_seconds,
+                            'retry_count': job.retry_count,
+                        }
+                        for job in jobs_list
+                    ], ttl_seconds=60)  # Short TTL for pending jobs list
+                except Exception as e:
+                    logger.warning(f"Cache write error: {e}")
+            else:
+                # Use cached data, convert back to job IDs for querying
+                jobs_list = CrawlJob.objects.filter(
+                    id__in=[job['id'] for job in cached_jobs[:max_jobs]],
+                    status=CrawlJob.STATE_PENDING  # Revalidate status
+                ).select_related('product_url', 'product_url__domain')
             
+            # Attempt to lock jobs for this bot
             assigned_jobs = []
             failed_locks = []
             
-            for job in jobs_qs:
+            for job in jobs_list[:max_jobs]:  # Limit to requested max_jobs
                 # Attempt to lock the job
                 if job.lock_for_bot(bot_id):
-                    # Lock successful
+                    # Lock successful - invalidate cache
+                    try:
+                        cache.delete(CacheKeyBuilder.job_detail(str(job.id)))
+                        cache.delete(cache_key)  # Invalidate pending list
+                    except Exception as e:
+                        logger.warning(f"Cache invalidation error: {e}")
+                    
                     timeout_at = timezone.now() + timezone.timedelta(
                         seconds=job.lock_ttl_seconds
                     )
@@ -245,9 +300,25 @@ class BotSubmitResultView(APIView):
             
             bot_config = result
             
-            # Get job
+            # === CACHE LAYER: Try to get job from cache ===
+            cache = get_cache_service()
+            job_cache_key = CacheKeyBuilder.job_detail(str(job_id))
+            
+            # Get job (from cache or DB)
             try:
-                job = CrawlJob.objects.get(id=job_id)
+                job = CrawlJob.objects.select_related('product_url', 'policy').get(id=job_id)
+                
+                # Cache job details for future lookups
+                try:
+                    cache.set(job_cache_key, {
+                        'id': str(job.id),
+                        'status': job.status,
+                        'locked_by': job.locked_by,
+                        'locked_at': job.locked_at.isoformat() if job.locked_at else None,
+                    }, ttl_seconds=600)
+                except Exception as e:
+                    logger.warning(f"Cache write error: {e}")
+                    
             except CrawlJob.DoesNotExist:
                 return Response({
                     'success': False,
@@ -274,6 +345,14 @@ class BotSubmitResultView(APIView):
             # Check if lock expired
             if job.is_lock_expired():
                 job.mark_expired()
+                
+                # Invalidate cache
+                try:
+                    cache.delete(job_cache_key)
+                    cache.clear_pattern(CacheKeyBuilder.all_jobs_pattern())
+                except Exception as e:
+                    logger.warning(f"Cache invalidation error: {e}")
+                
                 return Response({
                     'success': False,
                     'error': 'lock_expired',
@@ -298,6 +377,13 @@ class BotSubmitResultView(APIView):
                 
                 # Transition job: LOCKED → DONE
                 job.mark_done()
+                
+                # === CACHE INVALIDATION on state change ===
+                try:
+                    cache.delete(job_cache_key)
+                    cache.clear_pattern(CacheKeyBuilder.all_jobs_pattern())  # Clear pending lists
+                except Exception as e:
+                    logger.warning(f"Cache invalidation error: {e}")
                 
                 # Update bot stats
                 bot_config.increment_completed()
@@ -356,6 +442,13 @@ class BotSubmitResultView(APIView):
                     # Auto-retry: transition back to PENDING
                     job.mark_failed(error_msg=error_msg, auto_retry=True)
                     
+                    # === CACHE INVALIDATION on retry ===
+                    try:
+                        cache.delete(job_cache_key)
+                        cache.clear_pattern(CacheKeyBuilder.all_jobs_pattern())
+                    except Exception as e:
+                        logger.warning(f"Cache invalidation error: {e}")
+                    
                     # Update bot stats
                     bot_config.increment_failed()
                     
@@ -378,6 +471,13 @@ class BotSubmitResultView(APIView):
                 else:
                     # Retries exhausted: transition to FAILED
                     job.mark_failed(error_msg=error_msg, auto_retry=False)
+                    
+                    # === CACHE INVALIDATION on failure ===
+                    try:
+                        cache.delete(job_cache_key)
+                        cache.clear_pattern(CacheKeyBuilder.all_jobs_pattern())
+                    except Exception as e:
+                        logger.warning(f"Cache invalidation error: {e}")
                     
                     # Update bot stats
                     bot_config.increment_failed()

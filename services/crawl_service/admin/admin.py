@@ -13,8 +13,9 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.utils import timezone
-from django.urls import reverse
+from django.urls import reverse, path
 from django.db.models import Q, Count
+from django.http import JsonResponse
 import json
 
 from ..models import CrawlPolicy, CrawlJob, CrawlResult, BotConfig
@@ -1044,8 +1045,350 @@ class BotConfigAdmin(admin.ModelAdmin):
     regenerate_token.short_description = '🔄 Regenerate API Token (invalidates old token)'
 
 
+class CrawlCacheConfigAdmin(admin.ModelAdmin):
+    """Admin for Cache Configuration - Redis settings"""
+    
+    list_display = (
+        'name',
+        'service_key',
+        'status_badge',
+        'connection_badge',
+        'redis_connection_display',
+        'ttl_display',
+        'is_active',
+        'last_connection_test',
+    )
+    
+    list_filter = ('enabled', 'is_active', 'connection_status', 'created_at')
+    search_fields = ('name', 'redis_host')
+    readonly_fields = (
+        'id',
+        'service_key',
+        'connection_status',
+        'last_connection_test',
+        'created_at',
+        'updated_at',
+        'connection_test_display',
+    )
+    
+    fieldsets = (
+        ('Configuration Name', {
+            'fields': ('id', 'service_key', 'name'),
+        }),
+        ('Redis Connection', {
+            'fields': (
+                'redis_host',
+                'redis_port',
+                'redis_db',
+                'redis_password',
+            ),
+            'description': 'Redis server connection settings'
+        }),
+        ('Cache Behavior', {
+            'fields': (
+                'enabled',
+                'is_active',
+                'default_ttl_seconds',
+            ),
+            'description': 'Global cache settings'
+        }),
+        ('Cache Strategies', {
+            'fields': (
+                'cache_pending_jobs',
+                'cache_job_details',
+                'cache_product_urls',
+            ),
+            'description': 'Enable/disable specific caching strategies'
+        }),
+        ('TTL Overrides', {
+            'fields': (
+                'pending_jobs_ttl_seconds',
+                'job_details_ttl_seconds',
+                'product_urls_ttl_seconds',
+            ),
+            'description': 'Custom TTL for each cache type'
+        }),
+        ('Connection Status', {
+            'fields': (
+                'connection_status',
+                'last_connection_test',
+                'connection_test_display',
+            ),
+            'description': 'Redis connection health'
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    ordering = ['-is_active', '-created_at']
+    actions = ['test_connection', 'activate_config', 'clear_all_cache', 'disable_cache']
+
+    def has_add_permission(self, request):
+        """Allow up to predefined service slots (max 3)."""
+        from ..models import CrawlCacheConfig
+        return CrawlCacheConfig.objects.count() < 3
+    
+    def get_urls(self):
+        """Add custom URL for test connection endpoint."""
+        from django.urls import re_path
+        custom_urls = [
+            re_path(
+                r'^(?P<object_id>[a-f0-9-]+)/test/$',
+                self.admin_site.admin_view(self.test_connection_view),
+                name='crawlcacheconfig_test_connection',
+            ),
+        ]
+        urls = super().get_urls()
+        return custom_urls + urls  # Put custom URLs BEFORE standard ones
+    
+    def test_connection_view(self, request, object_id):
+        """AJAX view to test Redis connection."""
+        from ..models import CrawlCacheConfig
+        
+        # Only allow GET or POST
+        if request.method not in ['GET', 'POST']:
+            return JsonResponse({
+                'success': False,
+                'message': 'Method not allowed',
+            }, status=405)
+        
+        try:
+            config = CrawlCacheConfig.objects.get(id=object_id)
+            success, message = config.test_connection()
+            
+            # Update object after test
+            config.refresh_from_db()
+            
+            return JsonResponse({
+                'success': success,
+                'message': message,
+                'status': config.connection_status,
+                'last_test': config.last_connection_test.isoformat() if config.last_connection_test else None,
+            }, status=200, content_type='application/json')
+        except CrawlCacheConfig.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'message': 'Configuration not found',
+            }, status=404, content_type='application/json')
+        except Exception as e:
+            logger.error(f"Error testing connection: {e}", exc_info=True)
+            return JsonResponse({
+                'success': False,
+                'message': f'Error: {str(e)}',
+            }, status=500, content_type='application/json')
+    
+    def status_badge(self, obj):
+        """Display enabled/disabled status"""
+        if obj.enabled:
+            return format_html(
+                '<span style="background: #28a745; color: white; padding: 3px 8px; '
+                'border-radius: 3px; font-weight: bold;">🟢 ENABLED</span>'
+            )
+        return format_html(
+            '<span style="background: #6c757d; color: white; padding: 3px 8px; '
+            'border-radius: 3px; font-weight: bold;">🔴 DISABLED</span>'
+        )
+    status_badge.short_description = 'Status'
+    
+    def connection_badge(self, obj):
+        """Display connection status badge"""
+        if obj.connection_status == 'connected':
+            return format_html(
+                '<span style="background: #28a745; color: white; padding: 3px 8px; '
+                'border-radius: 3px;">✓ Connected</span>'
+            )
+        elif obj.connection_status == 'failed':
+            return format_html(
+                '<span style="background: #dc3545; color: white; padding: 3px 8px; '
+                'border-radius: 3px;">✗ Failed</span>'
+            )
+        else:
+            return format_html(
+                '<span style="background: #ffc107; color: black; padding: 3px 8px; '
+                'border-radius: 3px;">? Untested</span>'
+            )
+    connection_badge.short_description = 'Connection'
+    
+    def redis_connection_display(self, obj):
+        """Display Redis connection string"""
+        return format_html(
+            '<code style="background: #f8f9fa; padding: 2px 6px; border-radius: 3px;">'
+            '{}:{} (db={})</code>',
+            obj.redis_host,
+            obj.redis_port,
+            obj.redis_db
+        )
+    redis_connection_display.short_description = 'Redis Server'
+    
+    def ttl_display(self, obj):
+        """Display TTL settings"""
+        return format_html(
+            '<span style="font-size: 12px;">'
+            'Default: {}s | Jobs: {}s | Details: {}s | URLs: {}s'
+            '</span>',
+            obj.default_ttl_seconds,
+            obj.pending_jobs_ttl_seconds,
+            obj.job_details_ttl_seconds,
+            obj.product_urls_ttl_seconds
+        )
+    ttl_display.short_description = 'TTL Settings'
+    
+    def connection_test_display(self, obj):
+        """Display connection test button and results"""
+        test_btn = format_html(
+            '<button type="button" onclick="testRedisConnection(\'{}\');" '
+            'style="background: #007bff; color: white; border: none; padding: 8px 16px; '
+            'border-radius: 4px; cursor: pointer; font-weight: bold;">🔌 Test Connection Now</button>',
+            obj.id
+        )
+        
+        if obj.last_connection_test:
+            last_test = format_html(
+                '<div style="margin-top: 10px; padding: 10px; background: #f8f9fa; '
+                'border-radius: 4px; border-left: 4px solid {};">'
+                '<strong>Last Test:</strong> {}<br>'
+                '<strong>Status:</strong> {}'
+                '</div>',
+                '#28a745' if obj.connection_status == 'connected' else '#dc3545',
+                obj.last_connection_test.strftime('%Y-%m-%d %H:%M:%S'),
+                obj.get_connection_status_display()
+            )
+        else:
+            last_test = format_html(
+                '<div style="margin-top: 10px; color: #6c757d; font-style: italic;">'
+                'No connection test performed yet'
+                '</div>'
+            )
+        
+        script = format_html(
+            '<script>'
+            'function testRedisConnection(configId) {{'
+            '  if (!confirm("Test Redis connection now?")) return;'
+            '  var csrfToken = document.querySelector("[name=csrfmiddlewaretoken]");'
+            '  var token = csrfToken ? csrfToken.value : "";'
+            '  var testUrl = window.location.pathname.replace(/\/change\/?$/, "/") + "test/";'
+            '  fetch(testUrl, {{'
+            '    method: "POST",'
+            '    headers: {{'
+            '      "Content-Type": "application/json",'
+            '      "X-CSRFToken": token,'
+            '      "X-Requested-With": "XMLHttpRequest"'
+            '    }}'
+            '  }})'
+            '  .then(function(response) {{'
+            '    if (!response.ok) {{'
+            '      throw new Error("HTTP " + response.status + " - " + response.statusText);'
+            '    }}'
+            '    return response.json();'
+            '  }})'
+            '  .then(function(data) {{'
+            '    console.log("Response:", data);'
+            '    if (data.success) {{'
+            '      alert("✓ " + data.message);'
+            '      location.reload();'
+            '    }} else {{'
+            '      alert("✗ " + data.message);'
+            '    }}'
+            '  }})'
+            '  .catch(function(error) {{'
+            '    console.error("Error:", error);'
+            '    alert("Error: " + error.message);'
+            '  }});'
+            '}}'
+            '</script>'
+        )
+        
+        return format_html('{}{}{}', test_btn, last_test, script)
+    connection_test_display.short_description = 'Connection Test'
+    
+    def test_connection(self, request, queryset):
+        """Test Redis connection for selected configs"""
+        results = []
+        for config in queryset:
+            success, message = config.test_connection()
+            results.append(f"{config.name}: {message}")
+            
+        self.message_user(
+            request,
+            "\n".join(results),
+            level='SUCCESS' if all('Success' in r for r in results) else 'WARNING'
+        )
+    test_connection.short_description = '🔌 Test Redis Connection'
+    
+    def activate_config(self, request, queryset):
+        """Activate selected config (only one can be active)"""
+        if queryset.count() != 1:
+            self.message_user(
+                request,
+                'Please select exactly one configuration to activate',
+                level='ERROR'
+            )
+            return
+        
+        config = queryset.first()
+        config.is_active = True
+        config.save()
+        
+        # Reset cache service singleton to reload config
+        from ..infrastructure.redis_adapter import reset_cache_service
+        reset_cache_service()
+        
+        self.message_user(
+            request,
+            f'Configuration "{config.name}" activated. Cache service reloaded.',
+            level='SUCCESS'
+        )
+    activate_config.short_description = '✓ Activate Configuration'
+    
+    def clear_all_cache(self, request, queryset):
+        """Clear all cache entries"""
+        from ..infrastructure.redis_adapter import get_cache_service
+        from ..domain.cache_service import CacheKeyBuilder
+        
+        try:
+            cache = get_cache_service()
+            
+            # Clear all crawl service cache patterns
+            jobs_cleared = cache.clear_pattern(CacheKeyBuilder.all_jobs_pattern())
+            urls_cleared = cache.clear_pattern(CacheKeyBuilder.all_urls_pattern())
+            
+            self.message_user(
+                request,
+                f'Cache cleared: {jobs_cleared} job keys, {urls_cleared} URL keys',
+                level='SUCCESS'
+            )
+        except Exception as e:
+            self.message_user(
+                request,
+                f'Failed to clear cache: {str(e)}',
+                level='ERROR'
+            )
+    clear_all_cache.short_description = '🗑️ Clear All Cache'
+    
+    def disable_cache(self, request, queryset):
+        """Disable caching for selected configs"""
+        count = queryset.update(enabled=False)
+        
+        # Reset cache service
+        from ..infrastructure.redis_adapter import reset_cache_service
+        reset_cache_service()
+        
+        self.message_user(
+            request,
+            f'{count} configuration(s) disabled. Cache service reloaded.',
+            level='WARNING'
+        )
+    disable_cache.short_description = '🔴 Disable Cache'
+
+
 # Register models to CustomAdminSite (hash-protected)
 default_admin_site.register(CrawlPolicy, CrawlPolicyAdmin)
 default_admin_site.register(CrawlJob, CrawlJobAdmin)
 default_admin_site.register(CrawlResult, CrawlResultAdmin)
 default_admin_site.register(BotConfig, BotConfigAdmin)
+
+# Import CrawlCacheConfig and register
+from ..models import CrawlCacheConfig
+default_admin_site.register(CrawlCacheConfig, CrawlCacheConfigAdmin)
