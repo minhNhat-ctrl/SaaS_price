@@ -124,3 +124,10 @@ class AdminCoreConfig(AppConfig):
         # Store AdminService ở settings để middleware có thể access
         settings.ADMIN_SERVICE = admin_service
         settings.ADMIN_HASH_SERVICE = hash_service
+        
+        # 7. Import django_admin_setup để register Django built-in models
+        try:
+            from . import django_admin_setup
+            logger.info("✓ Django built-in admin (User, Group, Permission) registered")
+        except Exception as e:
+            logger.warning(f"Note: Could not register Django built-in admin: {str(e)}")

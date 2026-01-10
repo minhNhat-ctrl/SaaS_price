@@ -49,6 +49,9 @@ urlpatterns = [
     # Products module - product management and price tracking
     path('api/products/', include('services.products.api.urls')),
     
+    # Products Shared module - shared product URLs and price history
+    path('api/', include('services.products_shared.api.urls')),
+    
     # Crawl Service - bot-controlled web crawling
     path('api/crawl/', include('services.crawl_service.api.urls')),
 ]
