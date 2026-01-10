@@ -813,13 +813,16 @@ class CrawlResultAdmin(admin.ModelAdmin):
         # Full JSON (collapsed)
         parts.append('<details style="margin-top:12px;">')
         parts.append('<summary style="cursor:pointer;color:#1976D2;font-weight:bold;font-size:13px;">📄 View Full JSON</summary>')
+        # Escape JSON to prevent format_html interpretation of curly braces
+        json_str = json.dumps(pd, indent=2, ensure_ascii=False)
+        json_str_escaped = json_str.replace('{', '{{').replace('}', '}}')
         parts.append('<pre style="margin-top:8px;background:#263238;color:#AED581;padding:12px;border-radius:4px;overflow-x:auto;font-size:12px;">{}</pre>'.format(
-            json.dumps(pd, indent=2, ensure_ascii=False)
+            json_str_escaped
         ))
         parts.append('</details>')
         
         parts.append('</div>')
-        return format_html(''.join(parts))
+        return mark_safe(''.join(parts))
     parsed_data_display.short_description = 'Parsed Data'
     
     def has_add_permission(self, request):
