@@ -2,7 +2,7 @@
 Django Signals for Crawl Service
 
 Auto-create CrawlJob when new ProductURL is added.
-Finds appropriate CrawlPolicy by domain (group-based, not per-URL).
+Status resets are handled via Redis-backed JobResetRule; no policy selection.
 """
 
 from django.db.models.signals import post_save
@@ -11,7 +11,8 @@ from django.utils import timezone
 import logging
 
 from services.products_shared.infrastructure.django_models import ProductURL
-from services.crawl_service.models import CrawlPolicy, CrawlJob
+from services.crawl_service.models import CrawlJob, JobResetRule
+from services.crawl_service.infrastructure.redis_job_scheduler import schedule_reset_to_pending
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,7 @@ def auto_create_crawl_job(sender, instance, created, **kwargs):
     """
     Automatically create CrawlJob when new ProductURL is added.
     
-    Tìm CrawlPolicy phù hợp theo domain (không tạo policy mới cho mỗi URL).
-    Scale tốt cho hàng triệu URLs.
+    Create jobs with default configuration; policy selection removed.
     """
     if not created:
         return  # Only for new URLs
@@ -35,27 +35,8 @@ def auto_create_crawl_job(sender, instance, created, **kwargs):
         domain = instance.domain
         if not domain:
             logger.warning(f"ProductURL has no domain: {instance.normalized_url[:80]}")
-            return
         
-        # Tìm policy phù hợp cho domain này (priority cao nhất)
-        policies = CrawlPolicy.objects.filter(
-            domain=domain,
-            enabled=True
-        ).order_by('-priority')
-        
-        # Check pattern matching
-        matching_policy = None
-        for policy in policies:
-            if policy.matches_url(instance.normalized_url):
-                matching_policy = policy
-                break
-        
-        if not matching_policy:
-            logger.warning(
-                f"No enabled CrawlPolicy found for domain={domain.name}, "
-                f"URL will not be crawled: {instance.normalized_url[:80]}"
-            )
-            return
+        # Policy no longer determines creation; create job with defaults
         
         # Check if job already exists for this URL
         existing_job = CrawlJob.objects.filter(
@@ -67,21 +48,57 @@ def auto_create_crawl_job(sender, instance, created, **kwargs):
             logger.info(f"Job already exists for: {instance.normalized_url[:80]}")
             return
         
-        # Create CrawlJob
+        # Create CrawlJob with defaults
         job = CrawlJob.objects.create(
-            policy=matching_policy,
             product_url=instance,
             status='pending',
-            priority=matching_policy.priority,
-            max_retries=matching_policy.max_retries,
+            priority=5,
+            max_retries=3,
             retry_count=0,
+            timeout_minutes=10,
             lock_ttl_seconds=600,
+            rule_tag='base',
         )
         
         logger.info(
-            f"✓ Auto-created CrawlJob: {job.id} for {instance.normalized_url[:80]} "
-            f"(policy={matching_policy.name})"
+            f"✓ Auto-created CrawlJob: {job.id} for {instance.normalized_url[:80]}"
         )
             
     except Exception as e:
         logger.error(f"Failed to auto-create job for {instance.normalized_url[:80]}: {e}", exc_info=True)
+
+
+@receiver(post_save, sender=JobResetRule)
+def apply_rule_on_save(sender, instance: JobResetRule, created, **kwargs):
+    """
+    When a JobResetRule is saved, schedule resets:
+    - Enqueue DONE jobs matching the rule to become PENDING.
+    """
+    try:
+        if not instance.enabled:
+            return
+
+        # Build queryset of matching jobs (DONE only to avoid locking/pending noise)
+        qs = CrawlJob.objects.filter(status='done')
+        sel = instance.SelectionType
+        if instance.selection_type == sel.DOMAIN and instance.domain:
+            qs = qs.filter(product_url__domain=instance.domain)
+        elif instance.selection_type == sel.DOMAIN_REGEX and instance.domain_regex:
+            qs = qs.filter(product_url__domain__name__regex=instance.domain_regex)
+        elif instance.selection_type == sel.URL_REGEX and instance.url_pattern:
+            qs = qs.filter(product_url__normalized_url__regex=instance.url_pattern)
+        elif instance.selection_type == sel.RULE and instance.rule_tag:
+            qs = qs.filter(rule_tag=instance.rule_tag)
+        # ALL → leave qs as-is
+
+        job_ids = list(qs.values_list('id', flat=True)[:1000])  # cap batch
+        if not job_ids:
+            return
+
+        run_at = timezone.now().timestamp()  # immediate reset
+        scheduled = schedule_reset_to_pending([str(jid) for jid in job_ids], run_at_ts=run_at)
+        logger.info(
+            f"Rule '{instance.name}' scheduled {scheduled} DONE jobs to PENDING via Redis"
+        )
+    except Exception as e:
+        logger.error(f"apply_policy_on_save error: {e}")

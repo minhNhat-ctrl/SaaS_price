@@ -11,6 +11,7 @@ Architecture:
 """
 
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 import uuid
 import logging
@@ -19,101 +20,200 @@ logger = logging.getLogger(__name__)
 
 
 class CrawlPolicy(models.Model):
-    """
-    Crawl Policy - Quản lý nhóm URLs theo domain/pattern.
-    
-    Không lưu từng URL cụ thể - chỉ quản lý cấu hình theo domain.
-    VD: 1 policy cho tất cả URLs của amazon.co.jp
-    Scale tốt cho hàng triệu URLs.
-    """
+    """Describe crawl behaviour for a group of jobs selected by flexible criteria."""
+
+    class SelectionType(models.TextChoices):
+        ALL = 'all', 'All jobs'
+        DOMAIN = 'domain', 'Exact domain'
+        DOMAIN_REGEX = 'domain_regex', 'Domain regex'
+        URL_REGEX = 'url_regex', 'URL regex'
+        RULE = 'rule', 'Rule tag'
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    
-    # Domain-based grouping (thay vì URL cụ thể)
+
+    # Selection metadata
+    name = models.CharField(
+        max_length=255,
+        default='Default Policy',
+        help_text="Tên policy (VD: 'Amazon JP - High Priority')"
+    )
+    selection_type = models.CharField(
+        max_length=20,
+        choices=SelectionType.choices,
+        default=SelectionType.ALL,
+        help_text="Chiến lược chọn jobs (all/domain/domain_regex/url_regex/rule)"
+    )
+    is_default = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Đánh dấu policy nền áp dụng khi không có policy khác khớp"
+    )
+    rule_tag = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Rule tag để match job khi selection_type = rule"
+    )
     domain = models.ForeignKey(
         'products_shared.Domain',
         on_delete=models.CASCADE,
         related_name='crawl_policies',
-        null=True,  # Nullable during migration
+        null=True,
         blank=True,
-        help_text="Domain này policy áp dụng cho"
+        help_text="Domain áp dụng khi selection_type = domain"
     )
-    name = models.CharField(
+    domain_regex = models.CharField(
         max_length=255,
-        default='Default Policy',  # Default for migration
-        help_text="Tên policy (VD: 'Amazon JP - High Priority')"
+        blank=True,
+        help_text="Regex cho domain name khi selection_type = domain_regex"
     )
     url_pattern = models.CharField(
         max_length=500,
         blank=True,
-        help_text="Regex pattern để filter URLs (optional, empty = all URLs of domain)"
+        help_text="Regex cho URL khi selection_type = url_regex"
     )
-    
-    # Frequency config
+
+    # Behaviour configuration
     frequency_hours = models.IntegerField(default=24, help_text="Crawl every N hours (6/24/168/...)")
     priority = models.IntegerField(
         default=5,
         choices=[(1, 'Low'), (5, 'Normal'), (10, 'High'), (20, 'Urgent')],
         db_index=True,
-        help_text="Base priority for this URL"
+        help_text="Base priority for matching jobs"
     )
-    
-    # Retry config
     max_retries = models.IntegerField(default=3, help_text="Max retry attempts")
     retry_backoff_minutes = models.IntegerField(default=5, help_text="Backoff for retries")
     timeout_minutes = models.IntegerField(default=10, help_text="Crawl timeout")
-    
-    # Crawl config
     crawl_config = models.JSONField(default=dict, blank=True, help_text="Headers, JS required, etc.")
-    
-    # Enable/disable
     enabled = models.BooleanField(default=True, db_index=True)
-    
+
     # Tracking
     last_success_at = models.DateTimeField(null=True, blank=True, help_text="Last successful crawl")
     last_failed_at = models.DateTimeField(null=True, blank=True, help_text="Last failed crawl")
     next_run_at = models.DateTimeField(db_index=True, help_text="When scheduler should next create a job")
     failure_count = models.IntegerField(default=0, help_text="Consecutive failures")
-    
+
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = 'crawl_policy'
         verbose_name = 'Crawl Policy'
         verbose_name_plural = 'Crawl Policies'
+        ordering = ['-priority', 'next_run_at']
         indexes = [
-            models.Index(fields=['domain', 'enabled']),
+            models.Index(fields=['enabled', 'selection_type']),
             models.Index(fields=['enabled', 'next_run_at']),
             models.Index(fields=['-priority', 'next_run_at']),
         ]
-        ordering = ['-priority', 'next_run_at']
-        unique_together = [['domain', 'name']]
-    
+        constraints = [
+            models.UniqueConstraint(
+                fields=['is_default'],
+                condition=Q(is_default=True),
+                name='crawl_policy_single_default'
+            )
+        ]
+
     def __str__(self):
-        return f"{self.domain.name} - {self.name} (priority={self.priority})"
-    
-    def matches_url(self, url: str) -> bool:
-        """Check if URL matches this policy's pattern."""
-        if not self.url_pattern:
-            return True  # Empty pattern = match all URLs of domain
-        import re
-        try:
-            return bool(re.search(self.url_pattern, url))
-        except re.error:
+        target = {
+            self.SelectionType.ALL: 'All jobs',
+            self.SelectionType.DOMAIN: self.domain.name if self.domain else 'domain:—',
+            self.SelectionType.DOMAIN_REGEX: f"domain~{self.domain_regex or '—'}",
+            self.SelectionType.URL_REGEX: f"url~{self.url_pattern or '—'}",
+            self.SelectionType.RULE: f"rule:{self.rule_tag or '—'}",
+        }.get(self.selection_type, 'unknown')
+        base_tag = ' (base)' if self.is_default else ''
+        return f"{self.name}{base_tag} [{target}]"
+
+    def save(self, *args, **kwargs):
+        if self.is_default:
+            CrawlPolicy.objects.filter(is_default=True).exclude(pk=self.pk).update(is_default=False)
+            self.selection_type = self.SelectionType.ALL
+            if not self.rule_tag:
+                self.rule_tag = 'base'
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get_default_policy(cls):
+        """Return the enabled default policy if it exists."""
+        return cls.objects.filter(is_default=True, enabled=True).order_by('-priority').first()
+
+    @classmethod
+    def resolved_policies(cls):
+        """Return enabled policies ordered by priority for matching operations."""
+        return list(cls.objects.filter(enabled=True).order_by('-priority', 'created_at'))
+
+    def matches_product(self, product_url) -> bool:
+        """Check if a ProductURL matches the selection criteria."""
+        domain_name = None
+        url = None
+        if product_url is not None:
+            domain = getattr(product_url, 'domain', None)
+            domain_name = getattr(domain, 'name', None)
+            url = getattr(product_url, 'normalized_url', None) or getattr(product_url, 'raw_url', None)
+        return self._matches(target_url=url, domain_name=domain_name, job_rule_tag=None)
+
+    def matches_job(self, job) -> bool:
+        """Check if an existing CrawlJob matches the policy criteria."""
+        product_url = getattr(job, 'product_url', None)
+        domain = getattr(product_url, 'domain', None) if product_url else None
+        domain_name = getattr(domain, 'name', None)
+        url = getattr(product_url, 'normalized_url', None) or getattr(product_url, 'raw_url', None)
+        job_rule_tag = getattr(job, 'rule_tag', None)
+        return self._matches(target_url=url, domain_name=domain_name, job_rule_tag=job_rule_tag)
+
+    def matches_url(self, url, *, domain_name=None, job_rule_tag=None) -> bool:
+        """Backwards compatible matcher for string-based checks."""
+        return self._matches(target_url=url, domain_name=domain_name, job_rule_tag=job_rule_tag)
+
+    def _matches(self, *, target_url=None, domain_name=None, job_rule_tag=None) -> bool:
+        if not self.enabled:
             return False
-    
-    def schedule_next_run(self, success=True):
+
+        if self.selection_type == self.SelectionType.ALL:
+            return True
+
+        if self.selection_type == self.SelectionType.DOMAIN:
+            if not self.domain or not domain_name:
+                return False
+            return self.domain.name == domain_name
+
+        if self.selection_type == self.SelectionType.DOMAIN_REGEX:
+            if not self.domain_regex or not domain_name:
+                return False
+            import re
+            try:
+                return bool(re.search(self.domain_regex, domain_name))
+            except re.error:
+                logger.warning("Invalid domain_regex on policy %s", self.id)
+                return False
+
+        if self.selection_type == self.SelectionType.URL_REGEX:
+            if not self.url_pattern or not target_url:
+                return False
+            import re
+            try:
+                return bool(re.search(self.url_pattern, target_url))
+            except re.error:
+                logger.warning("Invalid url_pattern on policy %s", self.id)
+                return False
+
+        if self.selection_type == self.SelectionType.RULE:
+            if not self.rule_tag or not job_rule_tag:
+                return False
+            return self.rule_tag == job_rule_tag
+
+        return False
+
+    def schedule_next_run(self, success: bool = True):
         """Reschedule next_run_at based on success/failure."""
         if success:
             self.failure_count = 0
             self.last_success_at = timezone.now()
-            # Reset to normal frequency
             self.next_run_at = timezone.now() + timezone.timedelta(hours=self.frequency_hours)
         else:
             self.failure_count += 1
             self.last_failed_at = timezone.now()
-            # Exponential backoff: 5min, 10min, 20min, ...
             backoff_mins = self.retry_backoff_minutes * (2 ** min(self.failure_count - 1, 3))
             self.next_run_at = timezone.now() + timezone.timedelta(minutes=backoff_mins)
         self.save(update_fields=['next_run_at', 'failure_count', 'last_success_at', 'last_failed_at'])
@@ -184,6 +284,13 @@ class CrawlJob(models.Model):
     )
     max_retries = models.IntegerField(default=3)
     timeout_minutes = models.IntegerField(default=10)
+    rule_tag = models.CharField(
+        max_length=100,
+        default='base',
+        blank=True,
+        db_index=True,
+        help_text="Logical rule identifier for policy selection"
+    )
     
     # Locking for Concurrency Safety
     locked_by = models.CharField(
@@ -223,6 +330,7 @@ class CrawlJob(models.Model):
             models.Index(fields=['status', '-priority', 'created_at']),
             models.Index(fields=['locked_by', 'locked_at']),
             models.Index(fields=['-priority', 'status']),
+            models.Index(fields=['rule_tag', 'status']),
         ]
         ordering = ['-priority', '-created_at']
     
@@ -716,3 +824,96 @@ class CrawlCacheConfig(models.Model):
             self.connection_status = 'failed'
             self.save(update_fields=['connection_status'])
             return False, f"Connection failed: {exc.__class__.__name__}: {exc}"
+
+
+# ===== Redis-based Job Reset Rule (Status-only policy) =====
+
+class JobResetRule(models.Model):
+    """
+    Status-only rule for resetting CrawlJob back to PENDING.
+    Selection is flexible (all/domain/domain_regex/url_regex/rule_tag).
+    """
+
+    class SelectionType(models.TextChoices):
+        ALL = 'all', 'All jobs'
+        DOMAIN = 'domain', 'Exact domain'
+        DOMAIN_REGEX = 'domain_regex', 'Domain regex'
+        URL_REGEX = 'url_regex', 'URL regex'
+        RULE = 'rule', 'Rule tag'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255, help_text="Tên rule (VD: 'Reset hourly - Amazon')")
+    selection_type = models.CharField(max_length=20, choices=SelectionType.choices, default=SelectionType.ALL)
+    rule_tag = models.CharField(max_length=100, blank=True)
+    domain = models.ForeignKey('products_shared.Domain', on_delete=models.CASCADE, null=True, blank=True)
+    domain_regex = models.CharField(max_length=255, blank=True)
+    url_pattern = models.CharField(max_length=500, blank=True)
+
+    frequency_hours = models.IntegerField(default=24, help_text="Thời gian reset về PENDING (giờ)")
+    enabled = models.BooleanField(default=True, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'job_reset_rule'
+        verbose_name = 'Job Reset Rule'
+        verbose_name_plural = 'Job Reset Rules'
+        ordering = ['-enabled', 'name']
+        indexes = [
+            models.Index(fields=['enabled', 'selection_type']),
+        ]
+
+    def __str__(self):
+        target = {
+            self.SelectionType.ALL: 'All jobs',
+            self.SelectionType.DOMAIN: self.domain.name if self.domain else 'domain:—',
+            self.SelectionType.DOMAIN_REGEX: f"domain~{self.domain_regex or '—'}",
+            self.SelectionType.URL_REGEX: f"url~{self.url_pattern or '—'}",
+            self.SelectionType.RULE: f"rule:{self.rule_tag or '—'}",
+        }.get(self.selection_type, 'unknown')
+        return f"{self.name} [{target}] every {self.frequency_hours}h"
+
+    @classmethod
+    def enabled_rules(cls):
+        return list(cls.objects.filter(enabled=True).order_by('created_at'))
+
+    def matches_job(self, job: CrawlJob) -> bool:
+        product_url = getattr(job, 'product_url', None)
+        domain = getattr(product_url, 'domain', None) if product_url else None
+        domain_name = getattr(domain, 'name', None)
+        url = getattr(product_url, 'normalized_url', None) or getattr(product_url, 'raw_url', None)
+        job_rule_tag = getattr(job, 'rule_tag', None)
+
+        if not self.enabled:
+            return False
+        if self.selection_type == self.SelectionType.ALL:
+            return True
+        if self.selection_type == self.SelectionType.DOMAIN:
+            return bool(self.domain and domain_name and self.domain.name == domain_name)
+        if self.selection_type == self.SelectionType.DOMAIN_REGEX:
+            if not self.domain_regex or not domain_name:
+                return False
+            import re
+            try:
+                return bool(re.search(self.domain_regex, domain_name))
+            except re.error:
+                return False
+        if self.selection_type == self.SelectionType.URL_REGEX:
+            if not self.url_pattern or not url:
+                return False
+            import re
+            try:
+                return bool(re.search(self.url_pattern, url))
+            except re.error:
+                return False
+        if self.selection_type == self.SelectionType.RULE:
+            return bool(self.rule_tag and job_rule_tag and self.rule_tag == job_rule_tag)
+        return False
+
+    @classmethod
+    def match_for_job(cls, job: CrawlJob) -> 'JobResetRule|None':
+        for rule in cls.enabled_rules():
+            if rule.matches_job(job):
+                return rule
+        return None

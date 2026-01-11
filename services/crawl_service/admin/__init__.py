@@ -2,10 +2,10 @@
 Admin Layer
 """
 
-from .admin import CrawlPolicyAdmin, CrawlJobAdmin, CrawlResultAdmin, BotConfigAdmin
+from .admin import JobResetRuleAdmin, CrawlJobAdmin, CrawlResultAdmin, BotConfigAdmin
 
 __all__ = [
-    'CrawlPolicyAdmin',
+    'JobResetRuleAdmin',
     'CrawlJobAdmin',
     'CrawlResultAdmin',
     'BotConfigAdmin',

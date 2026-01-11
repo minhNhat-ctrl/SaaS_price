@@ -13,7 +13,8 @@ from django.utils import timezone
 from decimal import Decimal
 import uuid
 
-from services.crawl_service.models import CrawlJob, CrawlResult, CrawlPolicy
+from services.crawl_service.models import CrawlJob, CrawlResult, JobResetRule
+from services.crawl_service.infrastructure.redis_job_scheduler import schedule_reset_to_pending
 
 
 class Command(BaseCommand):
@@ -103,7 +104,11 @@ class Command(BaseCommand):
 
         for job in jobs:
             self.stdout.write(f"\nJob: {job.id}")
-            self.stdout.write(f"  URL: {job.url[:80]}...")
+            try:
+                url = job.product_url.normalized_url if job.product_url else '—'
+            except Exception:
+                url = '—'
+            self.stdout.write(f"  URL: {url[:80]}...")
             self.stdout.write(f"  Locked by: {job.locked_by}")
             self.stdout.write(f"  Locked at: {job.locked_at}")
             self.stdout.write(f"  Expired: {job.is_lock_expired()}")
@@ -128,12 +133,17 @@ class Command(BaseCommand):
                 # Mark job as done
                 job.mark_done()
 
-                # Reschedule policy if exists
-                if job.policy:
-                    job.policy.schedule_next_run(success=True)
+                # Schedule next reset to PENDING via JobResetRule/Redis
+                try:
+                    rule = JobResetRule.match_for_job(job)
+                    hours = rule.frequency_hours if rule else 24
+                    run_at = timezone.now() + timezone.timedelta(hours=hours)
+                    schedule_reset_to_pending([str(job.id)], run_at_ts=run_at.timestamp())
                     self.stdout.write(
-                        f"  Policy next run: {job.policy.next_run_at}"
+                        f"  Next reset scheduled at: {run_at}"
                     )
+                except Exception as e:
+                    self.stdout.write(self.style.WARNING(f"  Reset scheduling failed: {e}"))
 
                 self.stdout.write(
                     self.style.SUCCESS(f"  ✓ Result created: {result.id}")

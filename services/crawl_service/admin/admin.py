@@ -9,7 +9,7 @@ Admin Actions:
 - CrawlJob: Sync all missing jobs, mark pending/expired, reset locks
 """
 
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.utils import timezone
@@ -18,7 +18,7 @@ from django.db.models import Q, Count
 from django.http import JsonResponse
 import json
 
-from ..models import CrawlPolicy, CrawlJob, CrawlResult, BotConfig
+from ..models import CrawlJob, CrawlResult, BotConfig, JobResetRule
 from core.admin_core.infrastructure.custom_admin import default_admin_site
 import logging
 
@@ -36,178 +36,75 @@ class CrawlResultInline(admin.TabularInline):
     def has_add_permission(self, request, obj=None):
         return False
 
+class JobResetRuleAdmin(admin.ModelAdmin):
+    """Admin for status-only Job Reset Rules (Redis-backed)."""
 
-class CrawlPolicyAdmin(admin.ModelAdmin):
-    """Admin for Crawl Policy - domain-based group management for URLs"""
-    
     list_display = (
-        'domain_badge',
-        'name',
-        'pattern_badge',
-        'priority_badge',
-        'frequency_badge',
-        'status_badge',
-        'next_run_at',
-        'failure_count',
-        'last_success_at',
+        'name', 'selection_badge', 'target_badge', 'frequency_badge', 'enabled', 'matching_jobs'
     )
-    
-    list_filter = ('enabled', 'priority', 'domain__name', 'created_at', 'next_run_at')
-    search_fields = ('domain__name', 'name', 'url_pattern')
-    readonly_fields = (
-        'id',
-        'created_at',
-        'updated_at',
-        'failure_display',
-        'next_run_display',
-    )
-    
+    list_filter = ('enabled', 'selection_type',)
+    search_fields = ('name', 'rule_tag', 'domain__name', 'domain_regex', 'url_pattern')
+    readonly_fields = ('id', 'created_at', 'updated_at')
     fieldsets = (
-        ('Domain & Identification', {
-            'fields': ('id', 'domain', 'name', 'url_pattern'),
-            'description': 'Domain-based policy: 1 policy manages many URLs by pattern matching'
-        }),
-        ('Frequency & Priority', {
-            'fields': ('frequency_hours', 'priority', 'enabled')
-        }),
-        ('Retry Configuration', {
-            'fields': ('max_retries', 'retry_backoff_minutes')
-        }),
-        ('Execution Configuration', {
-            'fields': ('timeout_minutes', 'crawl_config')
-        }),
-        ('Scheduling & Tracking', {
-            'fields': ('next_run_at', 'next_run_display', 'last_success_at', 'last_failed_at', 'failure_count', 'failure_display')
-        }),
-        ('Metadata', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
+        ('Identification', {'fields': ('id', 'name', 'enabled')}),
+        ('Selection', {'fields': ('selection_type', 'domain', 'domain_regex', 'url_pattern', 'rule_tag')}),
+        ('Behaviour', {'fields': ('frequency_hours',)}),
+        ('Metadata', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
     )
-    
-    ordering = ['-priority', 'next_run_at']
-    actions = ['sync_jobs_for_policy', 'reset_schedule']
-    
-    def domain_badge(self, obj):
-        """Display domain name"""
-        if obj.domain:
-            return format_html(
-                '<span style="font-weight: bold; color: #2196F3;">{}</span>',
-                obj.domain.name
-            )
-        return '—'
-    domain_badge.short_description = 'Domain'
-    
-    def pattern_badge(self, obj):
-        """Display URL pattern or 'All URLs'"""
-        if obj.url_pattern:
-            return format_html(
-                '<code style="background: #f5f5f5; padding: 2px 4px; border-radius: 3px;">{}</code>',
-                obj.url_pattern[:40]
-            )
-        return format_html('<span style="color: #4CAF50;">All URLs</span>')
-    pattern_badge.short_description = 'Pattern'
-    
-    def priority_badge(self, obj):
-        """Display priority with color"""
-        colors = {'1': 'gray', '5': 'blue', '10': 'orange', '20': 'red'}
-        priority_labels = {1: 'Low', 5: 'Normal', 10: 'High', 20: 'Urgent'}
-        color = colors.get(str(obj.priority), 'blue')
-        label = priority_labels.get(obj.priority, '?')
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 6px; border-radius: 3px;">{}</span>',
-            color, label
-        )
-    priority_badge.short_description = 'Priority'
-    
+    ordering = ['-enabled', 'name']
+    actions = ['schedule_resets_now']
+
+    def selection_badge(self, obj):
+        return obj.selection_type
+    selection_badge.short_description = 'Selection'
+
+    def target_badge(self, obj):
+        if obj.selection_type == obj.SelectionType.DOMAIN and obj.domain:
+            return format_html('<span style="background:#e3f2fd; padding:2px 6px; border-radius:3px;">{}</span>', obj.domain.name)
+        if obj.selection_type == obj.SelectionType.DOMAIN_REGEX and obj.domain_regex:
+            return format_html('<code>{}</code>', obj.domain_regex)
+        if obj.selection_type == obj.SelectionType.URL_REGEX and obj.url_pattern:
+            return format_html('<code>{}</code>', obj.url_pattern)
+        if obj.selection_type == obj.SelectionType.RULE and obj.rule_tag:
+            return format_html('<span style="background:#e8f5e9; padding:2px 6px; border-radius:3px;">{}</span>', obj.rule_tag)
+        return 'All jobs'
+    target_badge.short_description = 'Target'
+
     def frequency_badge(self, obj):
-        """Display frequency"""
-        return f"Every {obj.frequency_hours}h"
+        return f"{obj.frequency_hours}h"
     frequency_badge.short_description = 'Frequency'
-    
-    def status_badge(self, obj):
-        """Display enabled status"""
-        if obj.enabled:
-            return format_html('<span style="color: green;">✓ Enabled</span>')
-        return format_html('<span style="color: red;">✗ Disabled</span>')
-    status_badge.short_description = 'Status'
-    
-    def failure_display(self, obj):
-        """Display failure info"""
-        if obj.failure_count == 0:
-            return "No failures"
-        return f"{obj.failure_count} consecutive failures"
-    failure_display.short_description = 'Failure Info'
-    
-    def next_run_display(self, obj):
-        """Display next run info"""
-        if not obj.next_run_at:
-            return "—"
-        now = timezone.now()
-        if obj.next_run_at <= now:
-            return format_html('<span style="color: green; font-weight: bold;">Ready to run NOW</span>')
-        delta = obj.next_run_at - now
-        hours = delta.total_seconds() / 3600
-        return "In {:.1f} hours".format(hours)
-    next_run_display.short_description = 'Next Run In'
-    
-    @admin.action(description="🔄 Sync Jobs for Selected Policies")
-    def sync_jobs_for_policy(self, request, queryset):
-        """Create jobs for all ProductURLs matching selected policies"""
-        from services.products_shared.infrastructure.django_models import ProductURL
-        from django.db import transaction
-        
-        total_created = 0
-        total_skipped = 0
-        
-        for policy in queryset.filter(enabled=True):
-            if not policy.domain:
-                continue
-            
-            # Get all active ProductURLs for this domain
-            product_urls = ProductURL.objects.filter(
-                domain=policy.domain,
-                is_active=True
-            )
-            
-            for product_url in product_urls:
-                # Check pattern matching
-                if not policy.matches_url(product_url.normalized_url):
-                    continue
-                
-                # Check if job already exists
-                if CrawlJob.objects.filter(product_url=product_url).exists():
-                    total_skipped += 1
-                    continue
-                
-                # Create job
-                with transaction.atomic():
-                    CrawlJob.objects.create(
-                        product_url=product_url,
-                        policy=policy,
-                        status='pending',
-                        priority=policy.priority,
-                        max_retries=policy.max_retries,
-                        timeout_minutes=policy.timeout_minutes
-                    )
-                    total_created += 1
-        
-        self.message_user(
-            request,
-            f"✓ Created {total_created} jobs, skipped {total_skipped} (already exist)"
-        )
-    
-    @admin.action(description="🔁 Reset Schedule to Now")
-    def reset_schedule(self, request, queryset):
-        """Reset next_run_at to now for immediate execution"""
-        count = queryset.update(next_run_at=timezone.now())
-        self.message_user(request, f"✓ Reset schedule for {count} policies")
-    
-    def has_delete_permission(self, request, obj=None):
-        # Only allow delete if no associated jobs
-        if obj and obj.jobs.exists():
-            return False
-        return request.user.is_superuser
+
+    def matching_jobs(self, obj):
+        qs = CrawlJob.objects.filter(status='done')
+        if obj.selection_type == obj.SelectionType.DOMAIN and obj.domain:
+            qs = qs.filter(product_url__domain=obj.domain)
+        elif obj.selection_type == obj.SelectionType.DOMAIN_REGEX and obj.domain_regex:
+            qs = qs.filter(product_url__domain__name__regex=obj.domain_regex)
+        elif obj.selection_type == obj.SelectionType.URL_REGEX and obj.url_pattern:
+            qs = qs.filter(product_url__normalized_url__regex=obj.url_pattern)
+        elif obj.selection_type == obj.SelectionType.RULE and obj.rule_tag:
+            qs = qs.filter(rule_tag=obj.rule_tag)
+        return qs.count()
+    matching_jobs.short_description = 'Matching DONE jobs'
+
+    @admin.action(description="🕒 Schedule Resets Now")
+    def schedule_resets_now(self, request, queryset):
+        from ..infrastructure.redis_job_scheduler import schedule_reset_to_pending
+        total = 0
+        for rule in queryset.filter(enabled=True):
+            qs = CrawlJob.objects.filter(status='done')
+            if rule.selection_type == rule.SelectionType.DOMAIN and rule.domain:
+                qs = qs.filter(product_url__domain=rule.domain)
+            elif rule.selection_type == rule.SelectionType.DOMAIN_REGEX and rule.domain_regex:
+                qs = qs.filter(product_url__domain__name__regex=rule.domain_regex)
+            elif rule.selection_type == rule.SelectionType.URL_REGEX and rule.url_pattern:
+                qs = qs.filter(product_url__normalized_url__regex=rule.url_pattern)
+            elif rule.selection_type == rule.SelectionType.RULE and rule.rule_tag:
+                qs = qs.filter(rule_tag=rule.rule_tag)
+            job_ids = list(qs.values_list('id', flat=True)[:2000])
+            scheduled = schedule_reset_to_pending([str(j) for j in job_ids], run_at_ts=timezone.now().timestamp())
+            total += scheduled
+        self.message_user(request, f"✓ Scheduled {total} job(s) to PENDING via Redis")
 
 
 class CrawlJobAdmin(admin.ModelAdmin):
@@ -216,6 +113,7 @@ class CrawlJobAdmin(admin.ModelAdmin):
     list_display = (
         'url_badge',
         'domain_badge',
+        'rule_tag',
         'status_badge',
         'bot_badge',
         'priority_badge',
@@ -224,8 +122,8 @@ class CrawlJobAdmin(admin.ModelAdmin):
         'created_at',
     )
     
-    list_filter = ('status', 'priority', 'product_url__domain__name', 'created_at', 'locked_at', 'policy')
-    search_fields = ('product_url__normalized_url', 'locked_by', 'product_url__domain__name')
+    list_filter = ('status', 'priority', 'rule_tag', 'product_url__domain__name', 'created_at', 'locked_at', 'policy')
+    search_fields = ('product_url__normalized_url', 'locked_by', 'product_url__domain__name', 'rule_tag')
     readonly_fields = (
         'id',
         'product_url',
@@ -254,7 +152,7 @@ class CrawlJobAdmin(admin.ModelAdmin):
             'fields': ('locked_by', 'locked_at', 'lock_ttl_seconds', 'lock_info_display')
         }),
         ('Configuration', {
-            'fields': ('priority', 'max_retries', 'timeout_minutes')
+            'fields': ('priority', 'max_retries', 'timeout_minutes', 'rule_tag')
         }),
         ('Retry Tracking', {
             'fields': ('retry_count', 'last_error', 'error_display')
@@ -439,43 +337,17 @@ class CrawlJobAdmin(admin.ModelAdmin):
         
         for product_url in product_urls:
             try:
-                # Find matching policy by domain
-                policies = CrawlPolicy.objects.filter(
-                    domain=product_url.domain,
-                    enabled=True
-                ).order_by('-priority')
-                
-                matching_policy = None
-                for policy in policies:
-                    if policy.matches_url(product_url.normalized_url):
-                        matching_policy = policy
-                        break
-                
-                if not matching_policy:
-                    # Create default policy if not exists
-                    matching_policy, created = CrawlPolicy.objects.get_or_create(
-                        domain=product_url.domain,
-                        name='Default Policy',
-                        defaults={
-                            'frequency_hours': 24,
-                            'priority': 5,
-                            'enabled': True,
-                            'next_run_at': timezone.now()
-                        }
-                    )
-                
-                # Create job
                 with transaction.atomic():
                     CrawlJob.objects.create(
                         product_url=product_url,
-                        policy=matching_policy,
                         status='pending',
-                        priority=matching_policy.priority,
-                        max_retries=matching_policy.max_retries,
-                        timeout_minutes=matching_policy.timeout_minutes
+                        priority=5,
+                        max_retries=3,
+                        timeout_minutes=10,
+                        lock_ttl_seconds=600,
+                        rule_tag='base'
                     )
                     total_created += 1
-                    
             except Exception as e:
                 total_failed += 1
                 logger.error(f"Failed to create job for {product_url.normalized_url}: {e}")
@@ -1268,7 +1140,7 @@ class CrawlCacheConfigAdmin(admin.ModelAdmin):
             '  if (!confirm("Test Redis connection now?")) return;'
             '  var csrfToken = document.querySelector("[name=csrfmiddlewaretoken]");'
             '  var token = csrfToken ? csrfToken.value : "";'
-            '  var testUrl = window.location.pathname.replace(/\/change\/?$/, "/") + "test/";'
+            '  var testUrl = window.location.pathname.replace(/\\/change\\/?$/, "/") + "test/";'
             '  fetch(testUrl, {{'
             '    method: "POST",'
             '    headers: {{'
@@ -1384,7 +1256,6 @@ class CrawlCacheConfigAdmin(admin.ModelAdmin):
 
 
 # Register models to CustomAdminSite (hash-protected)
-default_admin_site.register(CrawlPolicy, CrawlPolicyAdmin)
 default_admin_site.register(CrawlJob, CrawlJobAdmin)
 default_admin_site.register(CrawlResult, CrawlResultAdmin)
 default_admin_site.register(BotConfig, BotConfigAdmin)
@@ -1392,3 +1263,4 @@ default_admin_site.register(BotConfig, BotConfigAdmin)
 # Import CrawlCacheConfig and register
 from ..models import CrawlCacheConfig
 default_admin_site.register(CrawlCacheConfig, CrawlCacheConfigAdmin)
+default_admin_site.register(JobResetRule, JobResetRuleAdmin)

@@ -4,4 +4,4 @@ psycopg2-binary==2.9.6
 python-decouple==3.8
 django-tenants==3.5.0
 django-allauth==0.63.6
-Pillow-11.3.0
+Pillow==11.3.0

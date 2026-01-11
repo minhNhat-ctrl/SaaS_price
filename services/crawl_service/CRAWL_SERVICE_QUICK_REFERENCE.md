@@ -261,7 +261,13 @@ bot.run()
 ### CrawlPolicy
 ```
 ├─ id: UUID
-├─ url: VARCHAR(2048) [unique, indexed]
+├─ name: VARCHAR(255)
+├─ selection_type: ENUM('all','domain','domain_regex','url_regex','rule') [indexed]
+├─ is_default: BOOLEAN [indexed, unique when true]
+├─ rule_tag: VARCHAR(100)
+├─ domain_id: FK → Domain (optional)
+├─ domain_regex: VARCHAR(255)
+├─ url_pattern: VARCHAR(500)
 ├─ frequency_hours: INTEGER (6, 24, 168, ...)
 ├─ priority: INTEGER (1-20)
 ├─ max_retries: INTEGER
@@ -279,16 +285,20 @@ bot.run()
 ```
 ├─ id: UUID
 ├─ policy_id: FK → CrawlPolicy [indexed]
-├─ url: VARCHAR(2048)
+├─ product_url_hash: FK → ProductURL.url_hash
+├─ rule_tag: VARCHAR(100) [indexed]
 ├─ status: VARCHAR(20) [indexed]  # pending, locked, done, failed, expired
 ├─ priority: INTEGER
+├─ max_retries: INTEGER
+├─ timeout_minutes: INTEGER
 ├─ locked_by: VARCHAR(100)  # bot ID
 ├─ locked_at: TIMESTAMP
 ├─ lock_ttl_seconds: INTEGER (600)
 ├─ retry_count: INTEGER
-├─ max_retries: INTEGER
-├─ error_msg: TEXT
-└─ created_at: TIMESTAMP
+├─ last_result_at: TIMESTAMP
+├─ last_error: TEXT
+├─ created_at: TIMESTAMP
+└─ updated_at: TIMESTAMP
 ```
 
 ### CrawlResult

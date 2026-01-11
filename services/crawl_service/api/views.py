@@ -29,7 +29,7 @@ from django.db.models import Q
 from decimal import Decimal
 import logging
 
-from ..models import CrawlJob, CrawlPolicy, CrawlResult
+from ..models import CrawlJob, CrawlResult
 from .serializers import (
     BotPullRequestSerializer,
     JobResponseSerializer,
@@ -85,6 +85,12 @@ class BotPullJobsView(APIView):
     
     def post(self, request):
         try:
+            # Opportunistically process due job resets from Redis before serving jobs
+            try:
+                from ..infrastructure.redis_job_scheduler import process_due_resets
+                process_due_resets(max_batch=500)
+            except Exception as e:
+                logger.warning(f"Reset processing skipped: {e}")
             # Validate request
             serializer = BotPullRequestSerializer(data=request.data)
             if not serializer.is_valid():
@@ -163,7 +169,7 @@ class BotPullJobsView(APIView):
                 # Use cached data, convert back to job IDs for querying
                 jobs_list = CrawlJob.objects.filter(
                     id__in=[job['id'] for job in cached_jobs[:max_jobs]],
-                    status=CrawlJob.STATE_PENDING  # Revalidate status
+                    status=CrawlJob.STATE_PENDING
                 ).select_related('product_url', 'product_url__domain')
             
             # Attempt to lock jobs for this bot
@@ -306,7 +312,7 @@ class BotSubmitResultView(APIView):
             
             # Get job (from cache or DB)
             try:
-                job = CrawlJob.objects.select_related('product_url', 'policy').get(id=job_id)
+                job = CrawlJob.objects.select_related('product_url').get(id=job_id)
                 
                 # Cache job details for future lookups
                 try:
@@ -388,9 +394,16 @@ class BotSubmitResultView(APIView):
                 # Update bot stats
                 bot_config.increment_completed()
                 
-                # Reschedule policy
-                if job.policy:
-                    job.policy.schedule_next_run(success=True)
+                # Schedule next reset to PENDING via Redis using matching JobResetRule
+                try:
+                    from ..models import JobResetRule
+                    from ..infrastructure.redis_job_scheduler import schedule_reset_to_pending
+                    rule = JobResetRule.match_for_job(job)
+                    hours = rule.frequency_hours if rule else 24
+                    run_at = timezone.now() + timezone.timedelta(hours=hours)
+                    schedule_reset_to_pending([str(job.id)], run_at_ts=run_at.timestamp())
+                except Exception as e:
+                    logger.warning(f"Reset schedule failed: {e}")
                 
                 logger.info(
                     f"Job {job_id} completed: {result.price} {result.currency} by {bot_id}"
@@ -407,11 +420,7 @@ class BotSubmitResultView(APIView):
                         'status': job.status,
                         'price': float(result.price),
                         'currency': result.currency,
-                        'policy_next_run': (
-                            job.policy.next_run_at.isoformat()
-                            if job.policy
-                            else None
-                        )
+                        'next_reset_at': run_at.isoformat()
                     }
                 }, status=status.HTTP_201_CREATED)
             
@@ -482,9 +491,7 @@ class BotSubmitResultView(APIView):
                     # Update bot stats
                     bot_config.increment_failed()
                     
-                    # Reschedule policy with failure backoff
-                    if job.policy:
-                        job.policy.schedule_next_run(success=False)
+                    # No automatic reset scheduling on permanent failure.
                     
                     logger.error(
                         f"Job {job_id} failed permanently by {bot_id} "
