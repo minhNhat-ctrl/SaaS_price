@@ -506,6 +506,22 @@ class CrawlResult(models.Model):
         help_text="When bot actually performed the crawl"
     )
     created_at = models.DateTimeField(auto_now_add=True)
+
+    # History write tracking (admin-driven)
+    history_recorded = models.BooleanField(
+        default=False,
+        help_text="Whether this result has been recorded to shared PriceHistory"
+    )
+    history_record_status = models.CharField(
+        max_length=20,
+        default='none',
+        help_text="Record outcome: none, recorded, duplicate, failed"
+    )
+    history_recorded_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when recording to PriceHistory was acknowledged"
+    )
     
     class Meta:
         db_table = 'crawl_result'
@@ -514,6 +530,7 @@ class CrawlResult(models.Model):
         indexes = [
             models.Index(fields=['job', '-created_at']),
             models.Index(fields=['-created_at']),
+            models.Index(fields=['history_recorded', 'history_record_status']),
         ]
         ordering = ['-created_at']
     

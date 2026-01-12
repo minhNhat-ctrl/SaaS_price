@@ -88,9 +88,8 @@ class CustomAdminSite(admin.AdminSite):
         custom_urls = [
             path('modules/', self.admin_view(self.modules_view), name='admin_modules'),
             path('stats/', self.admin_view(self.stats_view), name='admin_stats'),
-            # Crawl Service dashboard shortcuts
-            path('crawl/', self.admin_view(self.crawl_dashboard_view), name='admin_crawl_dashboard'),
-            path('crawl/create-jobs/', self.admin_view(self.crawl_create_jobs_view), name='admin_crawl_create_jobs'),
+            # Crawl Service auto-record config
+            path('crawl_service/auto-record-config/', self.admin_view(self.auto_record_config_view), name='admin_crawl_auto_record_config'),
         ]
         
         return custom_urls + urls
@@ -122,7 +121,7 @@ class CustomAdminSite(admin.AdminSite):
         from django.shortcuts import render
         
         stats = {
-            'total_apps': len(apps.get_app_configs()),
+            'total_apps': len(list(apps.get_app_configs())),
             'total_models': len(apps.get_models()),
         }
 
@@ -142,26 +141,6 @@ class CustomAdminSite(admin.AdminSite):
         }
         return render(request, 'admin/stats.html', context)
 
-    def crawl_dashboard_view(self, request):
-        """Simple Crawl Service dashboard with shortcuts to models and actions"""
-        from django.http import HttpResponse
-        base = self.each_context(request)
-        # Build shortcut links (respect current admin base path)
-        # The admin base includes hash, so relative paths work
-        html = f"""
-        <div class="module">
-          <h2>Crawl Service</h2>
-          <ul>
-            <li><a href="../crawl_service/schedulerule/">Schedule Rules</a></li>
-            <li><a href="../crawl_service/crawljob/">Crawl Jobs</a></li>
-            <li><a href="../crawl_service/crawltask/">Crawl Tasks</a></li>
-            <li><a href="../crawl_service/crawlresult/">Crawl Results</a></li>
-            <li><a href="./create-jobs/">Create Jobs from Shared Products</a></li>
-          </ul>
-        </div>
-        """
-        return HttpResponse(html)
-
     def crawl_create_jobs_view(self, request):
                 """Admin view to trigger job import from shared products
 
@@ -171,7 +150,6 @@ class CustomAdminSite(admin.AdminSite):
                 from django.contrib import messages
                 from django.http import HttpResponse
                 from services.crawl_service.utils import create_jobs_from_shared
-                from services.crawl_service.models import ScheduleRule
                 from services.products_shared.infrastructure.django_models import Domain
 
                 # Form submission via GET to avoid CSRF template setup here
@@ -182,10 +160,10 @@ class CustomAdminSite(admin.AdminSite):
 
                 # If no rule specified, render a simple form
                 if not rule_id:
-                        rules = ScheduleRule.objects.order_by('name')
+                        # rules = ScheduleRule.objects.order_by('name')  # ScheduleRule removed
                         domains = Domain.objects.order_by('name')
                         # Build options
-                        rule_options = "".join([f'<option value="{r.id}">{r.name}</option>' for r in rules])
+                        # rule_options = "".join([f'<option value="{r.id}">{r.name}</option>' for r in rules])
                         domain_options = '<option value="">-- Any Domain --</option>' + "".join([
                                 f'<option value="{d.name}">{d.name}</option>' for d in domains
                         ])
@@ -193,31 +171,8 @@ class CustomAdminSite(admin.AdminSite):
                         html = f"""
                         <div class="module">
                             <h2>Create Crawl Jobs from Shared Products</h2>
-                            <form method="get" action="">
-                                <div class="form-row">
-                                    <label>Schedule Rule*</label>
-                                    <select name="rule" required>
-                                        {rule_options}
-                                    </select>
-                                </div>
-                                <div class="form-row">
-                                    <label>Domain</label>
-                                    <select name="domain">
-                                        {domain_options}
-                                    </select>
-                                </div>
-                                <div class="form-row">
-                                    <label>Limit</label>
-                                    <input type="number" name="limit" min="1" placeholder="e.g. 100" />
-                                </div>
-                                <div class="form-row">
-                                    <label>Only Active URLs</label>
-                                    <input type="checkbox" name="only_active" value="true" checked />
-                                </div>
-                                <div class="submit-row">
-                                    <button type="submit" class="default">Create Jobs</button>
-                                </div>
-                            </form>
+                            <p style="color: red; font-weight: bold;">This feature is temporarily disabled (ScheduleRule model removed).</p>
+                            <p>Please use CrawlJob admin to manage jobs directly.</p>
                         </div>
                         """
                         return HttpResponse(html)
@@ -245,6 +200,136 @@ class CustomAdminSite(admin.AdminSite):
 
                 # Redirect back to Crawl Jobs list
                 return redirect('../crawl_service/crawljob/')
+
+    def auto_record_config_view(self, request):
+        """
+        Render and manage auto-record configuration for crawl results.
+        
+        Includes scheduler management (start/stop/status).
+        
+        GET: Display current config in form
+        POST: Save updated config OR control scheduler (start/stop)
+        """
+        from django.shortcuts import render, redirect
+        from django.contrib import messages
+        from services.crawl_service.infrastructure.auto_recording import (
+            get_auto_record_config,
+            save_auto_record_config,
+        )
+        from services.crawl_service.infrastructure.scheduler_manager import get_scheduler_manager
+        
+        scheduler_manager = get_scheduler_manager()
+        
+        if request.method == 'POST':
+            action = request.POST.get('action')
+            
+            # Handle scheduler control actions
+            if action == 'start_scheduler':
+                success, msg = scheduler_manager.start()
+                if success:
+                    messages.success(request, f'✓ {msg}')
+                else:
+                    messages.error(request, f'✗ {msg}')
+                cfg = get_auto_record_config()
+            
+            elif action == 'stop_scheduler':
+                success, msg = scheduler_manager.stop()
+                if success:
+                    messages.success(request, f'✓ {msg}')
+                else:
+                    messages.error(request, f'✗ {msg}')
+                cfg = get_auto_record_config()
+            
+            elif action == 'reload_config':
+                scheduler_manager.reload_config()
+                messages.success(request, '✓ Scheduler configuration reloaded from file')
+                cfg = get_auto_record_config()
+            
+            # Handle config save
+            elif action == 'save_config' or action is None:
+                # Parse form submission
+                enabled = request.POST.get('enabled') == 'on'
+                allowed_sources = [s.strip() for s in (request.POST.get('allowed_sources') or '').split(',') if s.strip()]
+                min_confidence_str = request.POST.get('min_confidence', '0.85')
+                require_in_stock = request.POST.get('require_in_stock') == 'on'
+                allowed_domains = [d.strip() for d in (request.POST.get('allowed_domains') or '').split(',') if d.strip()]
+                currency_whitelist = [c.strip().upper() for c in (request.POST.get('currency_whitelist') or '').split(',') if c.strip()]
+                
+                # Parse cron config
+                scheduler_enabled = request.POST.get('scheduler_enabled') == 'on'
+                try:
+                    interval_seconds = int(request.POST.get('interval_seconds', '30'))
+                    batch_size = int(request.POST.get('batch_size', '100'))
+                    max_retries = int(request.POST.get('max_retries', '3'))
+                except (ValueError, TypeError):
+                    interval_seconds = 30
+                    batch_size = 100
+                    max_retries = 3
+                
+                # Parse confidence as float
+                try:
+                    min_confidence = float(min_confidence_str) if min_confidence_str else 0.85
+                    min_confidence = max(0.0, min(1.0, min_confidence))  # clamp 0-1
+                except (ValueError, TypeError):
+                    min_confidence = 0.85
+                
+                # Build config - IMPORTANT: preserve _cron_config structure
+                config_data = {
+                    'enabled': enabled,
+                    'allowed_sources': allowed_sources or ['jsonld', 'og', 'microdata', 'script_data', 'html_ml'],
+                    'min_confidence': min_confidence,
+                    'require_in_stock': require_in_stock,
+                    'allowed_domains': allowed_domains,
+                    'currency_whitelist': currency_whitelist,
+                    '_cron_config': {
+                        '_comment': 'Cron configuration for auto-record scheduler',
+                        'scheduler_enabled': scheduler_enabled,
+                        'interval_seconds': interval_seconds,
+                        'batch_size': batch_size,
+                        'max_retries': max_retries,
+                        'retry_failed_every_n_cycles': 50,
+                        'retry_failed_limit': 20,
+                        'log_queue_status_every_n_cycles': 10,
+                    }
+                }
+                
+                try:
+                    save_auto_record_config(config_data)
+                    messages.success(request, f'✓ Configuration saved: scheduler_enabled={scheduler_enabled}, interval={interval_seconds}s, batch={batch_size}')
+                    # Reload scheduler config if running
+                    if scheduler_manager.is_running():
+                        scheduler_manager.reload_config()
+                        messages.info(request, 'ℹ️ Scheduler config reloaded (will take effect on next cycle)')
+                    cfg = get_auto_record_config()
+                except Exception as e:
+                    messages.error(request, f'✗ Failed to save config: {str(e)}')
+                    cfg = get_auto_record_config()
+        else:
+            # GET: Display current config
+            cfg = get_auto_record_config()
+        
+        # Get scheduler status
+        scheduler_status = scheduler_manager.get_status()
+        
+        # Extract cron_config to avoid underscore in template
+        # Provide defaults if _cron_config doesn't exist
+        cron_config = cfg.get('_cron_config', {
+            'scheduler_enabled': True,
+            'interval_seconds': 30,
+            'batch_size': 100,
+            'max_retries': 3,
+        })
+        
+        context = {
+            **self.each_context(request),
+            'title': 'Auto-Record Configuration & Scheduler',
+            'cfg': cfg,
+            'cron_config': cron_config,
+            'all_sources': ['jsonld', 'og', 'microdata', 'script_data', 'html_ml'],
+            'scheduler_status': scheduler_status,
+        }
+        
+        return render(request, 'admin/crawl_auto_record_config.html', context)
 
     @staticmethod
     def _get_client_ip(request) -> str:

@@ -102,3 +102,39 @@ def apply_rule_on_save(sender, instance: JobResetRule, created, **kwargs):
         )
     except Exception as e:
         logger.error(f"apply_policy_on_save error: {e}")
+
+
+# Auto-record CrawlResult to url-price when config conditions are met
+@receiver(post_save, sender='crawl_service.CrawlResult')
+def auto_record_crawl_result(sender, instance, created, **kwargs):
+    """
+    Enqueue CrawlResult for async auto-recording.
+    
+    Does NOT block on record write - just enqueues to Redis.
+    Actual recording happens asynchronously via scheduler.
+    
+    Only runs on creation (not update).
+    """
+    if not created:
+        return  # Only for new results
+    
+    try:
+        from services.crawl_service.infrastructure.auto_recording import get_auto_record_config
+        from services.crawl_service.infrastructure.auto_record_queue import enqueue_auto_record
+        
+        cfg = get_auto_record_config()
+        result_id = getattr(instance, 'id', '?')
+        
+        # Check if auto-record is enabled
+        if not cfg.get('enabled'):
+            logger.debug(f"CrawlResult {result_id}: Auto-record disabled in config")
+            return
+        
+        # Enqueue for async processing (non-blocking)
+        if enqueue_auto_record(str(result_id)):
+            logger.debug(f"✓ Enqueued CrawlResult {result_id} for auto-record processing")
+        else:
+            logger.warning(f"✗ Failed to enqueue CrawlResult {result_id} for auto-record")
+            
+    except Exception as e:
+        logger.error(f"✗ Auto-record signal failed for result {getattr(instance, 'id', '?')}: {e}", exc_info=True)

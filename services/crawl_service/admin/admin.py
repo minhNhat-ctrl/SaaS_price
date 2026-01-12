@@ -25,6 +25,119 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# Custom Filters for CrawlResultAdmin
+class RecordingStatusFilter(admin.SimpleListFilter):
+    """Filter by recording status to PriceHistory"""
+    title = 'Recording Status'
+    parameter_name = 'recording_status'
+    
+    def lookups(self, request, model_admin):
+        return (
+            ('not_recorded', '🔵 Not Recorded'),
+            ('recorded', '✓ Recorded'),
+            ('duplicate', '⎘ Duplicate'),
+            ('failed', '✗ Failed'),
+        )
+    
+    def queryset(self, request, queryset):
+        if self.value() == 'not_recorded':
+            return queryset.filter(history_record_status='none')
+        elif self.value() == 'recorded':
+            return queryset.filter(history_record_status='recorded')
+        elif self.value() == 'duplicate':
+            return queryset.filter(history_record_status='duplicate')
+        elif self.value() == 'failed':
+            return queryset.filter(history_record_status='failed')
+        return queryset
+
+
+class JobStatusFilter(admin.SimpleListFilter):
+    """Filter by associated job status"""
+    title = 'Job Status'
+    parameter_name = 'job_status'
+    
+    def lookups(self, request, model_admin):
+        return (
+            ('pending', '⏳ Pending'),
+            ('locked', '🔒 Locked'),
+            ('done', '✓ Done'),
+            ('failed', '✗ Failed'),
+            ('expired', '⏱️ Expired'),
+        )
+    
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(job__status=self.value())
+        return queryset
+
+
+class AutoRecordQueueStatusFilter(admin.SimpleListFilter):
+    """Filter by auto-record queue status"""
+    title = 'Auto-Record Queue Status'
+    parameter_name = 'auto_record_queue'
+    
+    def lookups(self, request, model_admin):
+        return (
+            ('in_queue', '⏳ In Queue'),
+            ('processing', '⚙️ Processing'),
+            ('failed', '✗ Failed'),
+            ('not_queued', '— Not Queued'),
+        )
+    
+    def queryset(self, request, queryset):
+        from services.crawl_service.infrastructure.auto_record_queue import (
+            AUTO_RECORD_QUEUE, AUTO_RECORD_PROCESSING, AUTO_RECORD_FAILED
+        )
+        from services.crawl_service.infrastructure.redis_adapter import get_cache_service
+        
+        if not self.value():
+            return queryset
+        
+        try:
+            cache = get_cache_service()
+            client = getattr(cache, "_client", None)
+            if not client:
+                return queryset
+            
+            result_ids = set()
+            
+            if self.value() == 'in_queue':
+                queue_data = client.lrange(AUTO_RECORD_QUEUE, 0, -1)
+                result_ids = {id.decode('utf-8') if isinstance(id, bytes) else id for id in queue_data}
+            elif self.value() == 'processing':
+                result_ids = client.smembers(AUTO_RECORD_PROCESSING)
+                result_ids = {id.decode('utf-8') if isinstance(id, bytes) else id for id in result_ids}
+            elif self.value() == 'failed':
+                result_ids = client.smembers(AUTO_RECORD_FAILED)
+                result_ids = {id.decode('utf-8') if isinstance(id, bytes) else id for id in result_ids}
+            elif self.value() == 'not_queued':
+                # Get all result IDs in any queue state
+                queue_data = client.lrange(AUTO_RECORD_QUEUE, 0, -1)
+                queued_ids = {id.decode('utf-8') if isinstance(id, bytes) else id for id in queue_data}
+                
+                processing_ids = client.smembers(AUTO_RECORD_PROCESSING)
+                processing_ids = {id.decode('utf-8') if isinstance(id, bytes) else id for id in processing_ids}
+                
+                failed_ids = client.smembers(AUTO_RECORD_FAILED)
+                failed_ids = {id.decode('utf-8') if isinstance(id, bytes) else id for id in failed_ids}
+                
+                all_queued = queued_ids | processing_ids | failed_ids
+                # Return results NOT in queue
+                if all_queued:
+                    return queryset.exclude(id__in=all_queued)
+                return queryset
+            
+            if result_ids:
+                return queryset.filter(id__in=result_ids)
+            else:
+                # No results in this state - return empty queryset
+                return queryset.none()
+        
+        except Exception as e:
+            logger.warning(f"Error filtering by auto-record queue status: {e}")
+            return queryset
+
+
 class CrawlResultInline(admin.TabularInline):
     """Inline results for job"""
     model = CrawlResult
@@ -404,11 +517,22 @@ class CrawlResultAdmin(admin.ModelAdmin):
         'price_display',
         'price_sources_badge',
         'stock_badge',
+        'recording_status_badge',
+        'queue_status_badge',
+        'history_recorded_at',
         'crawled_ago',
         'created_at',
     )
     
-    list_filter = ('currency', 'in_stock', 'created_at', 'crawled_at')
+    list_filter = (
+        RecordingStatusFilter,
+        JobStatusFilter,
+        AutoRecordQueueStatusFilter,
+        'currency', 
+        'in_stock', 
+        'created_at', 
+        'crawled_at',
+    )
     search_fields = ('job__product_url__normalized_url', 'job__locked_by', 'title')
     readonly_fields = (
         'id',
@@ -421,6 +545,11 @@ class CrawlResultAdmin(admin.ModelAdmin):
         'created_at',
         'parsed_data_display',
         'raw_html',
+        'history_recorded',
+        'history_record_status',
+        'history_recorded_at',
+        'auto_record_status_display',
+        'queue_status_display',
     )
     
     fieldsets = (
@@ -436,6 +565,13 @@ class CrawlResultAdmin(admin.ModelAdmin):
         ('Crawl Details', {
             'fields': ('crawled_at',)
         }),
+        ('Auto-Record Status', {
+            'fields': ('auto_record_status_display', 'queue_status_display'),
+            'description': 'Shows whether this result meets auto-record conditions and its queue status. See Crawl admin > Auto-Record Configuration to edit criteria.'
+        }),
+        ('History Recording', {
+            'fields': ('history_recorded', 'history_record_status', 'history_recorded_at'),
+        }),
         ('Parser Data', {
             'fields': ('parsed_data_display', 'raw_html'),
             'classes': ('collapse',)
@@ -443,10 +579,21 @@ class CrawlResultAdmin(admin.ModelAdmin):
     )
     
     ordering = ['-created_at']
+    actions = ['write_price_to_shared_history']
 
     def get_queryset(self, request):
+        """Default filter: show only 'Not Recorded' and 'failed' status results"""
         qs = super().get_queryset(request)
-        return qs.select_related('job', 'job__product_url')
+        qs = qs.select_related('job', 'job__product_url')
+        
+        # Check if user has explicitly filtered, if not apply defaults
+        if 'recording_status' not in request.GET:
+            # Default: show 'Not Recorded' (none) and 'failed' statuses
+            qs = qs.filter(
+                Q(history_record_status='none') | Q(history_record_status='failed')
+            )
+        
+        return qs
     
     def job_url(self, obj):
         """Display job URL from ProductURL"""
@@ -572,6 +719,188 @@ class CrawlResultAdmin(admin.ModelAdmin):
         days = hours / 24
         return f"{int(days)}d ago"
     crawled_ago.short_description = 'Crawled'
+
+    def recording_status_badge(self, obj):
+        """Display recording status to shared PriceHistory"""
+        status = obj.history_record_status or 'none'
+        color_map = {
+            'recorded': ('✓ Recorded', '#4CAF50'),
+            'duplicate': ('⎘ Duplicate', '#9E9E9E'),
+            'failed': ('✗ Failed', '#F44336'),
+            'none': ('— Not Recorded', '#CCCCCC'),
+        }
+        label, color = color_map.get(status, ('—', '#CCCCCC'))
+        return format_html(
+            '<span style="background:{};color:white;padding:2px 6px;border-radius:3px;">{}</span>',
+            color,
+            label,
+        )
+    recording_status_badge.short_description = 'Recording'
+    
+    def queue_status_badge(self, obj):
+        """Display auto-record queue status in list view"""
+        from services.crawl_service.infrastructure.redis_adapter import get_cache_service
+        from services.crawl_service.infrastructure.auto_record_queue import (
+            AUTO_RECORD_QUEUE, AUTO_RECORD_PROCESSING, AUTO_RECORD_FAILED
+        )
+        
+        try:
+            cache = get_cache_service()
+            client = getattr(cache, "_client", None)
+            if not client:
+                return format_html('<span style="color:#999;">—</span>')
+            
+            result_id = str(obj.id)
+            
+            # Check which queue the result is in
+            if client.sismember(AUTO_RECORD_PROCESSING, result_id):
+                return format_html(
+                    '<span style="background:#FF9800;color:white;padding:2px 6px;border-radius:3px;">⚙️ Processing</span>'
+                )
+            elif client.sismember(AUTO_RECORD_FAILED, result_id):
+                return format_html(
+                    '<span style="background:#F44336;color:white;padding:2px 6px;border-radius:3px;">✗ Failed</span>'
+                )
+            elif client.lpos(AUTO_RECORD_QUEUE, result_id) is not None:
+                queue_pos = client.lpos(AUTO_RECORD_QUEUE, result_id)
+                return format_html(
+                    '<span style="background:#2196F3;color:white;padding:2px 6px;border-radius:3px;">⏳ Queue #{}</span>',
+                    queue_pos + 1
+                )
+            else:
+                return format_html('<span style="color:#999;">—</span>')
+        except Exception as e:
+            logger.warning(f"Error getting queue status for result {obj.id}: {e}")
+            return format_html('<span style="color:#999;">—</span>')
+    
+    queue_status_badge.short_description = 'Queue Status'
+    
+    def queue_status_display(self, obj):
+        """Display auto-record queue status in detail view"""
+        from services.crawl_service.infrastructure.redis_adapter import get_cache_service
+        from services.crawl_service.infrastructure.auto_record_queue import (
+            AUTO_RECORD_QUEUE, AUTO_RECORD_PROCESSING, AUTO_RECORD_FAILED
+        )
+        
+        try:
+            cache = get_cache_service()
+            client = getattr(cache, "_client", None)
+            if not client:
+                return format_html(
+                    '<div style="background:#f5f5f5;padding:10px;border-radius:3px;color:#999;">'
+                    'Redis not available'
+                    '</div>'
+                )
+            
+            result_id = str(obj.id)
+            
+            # Check which queue the result is in
+            if client.sismember(AUTO_RECORD_PROCESSING, result_id):
+                html = (
+                    '<div style="background:#fff3e0;padding:12px;border-left:4px solid #FF9800;border-radius:3px;">'
+                    '<span style="color:#E65100;font-weight:bold;">⚙️ Currently Processing</span><br/>'
+                    '<span style="color:#666;font-size:0.9em;">This result is currently being processed by the auto-record scheduler.</span>'
+                    '</div>'
+                )
+                return format_html(html)
+            elif client.sismember(AUTO_RECORD_FAILED, result_id):
+                failures = int(client.get(f"crawl:auto_record:failures:{result_id}") or 0)
+                html = (
+                    '<div style="background:#ffebee;padding:12px;border-left:4px solid #F44336;border-radius:3px;">'
+                    '<span style="color:#C62828;font-weight:bold;">✗ Failed in Queue</span><br/>'
+                    '<span style="color:#666;font-size:0.9em;">Failed after {failures} retry attempt(s). Will be retried periodically.</span>'
+                    '</div>'
+                ).format(failures=failures)
+                return format_html(html)
+            elif client.lpos(AUTO_RECORD_QUEUE, result_id) is not None:
+                queue_pos = client.lpos(AUTO_RECORD_QUEUE, result_id)
+                queue_len = client.llen(AUTO_RECORD_QUEUE)
+                html = (
+                    '<div style="background:#e3f2fd;padding:12px;border-left:4px solid #2196F3;border-radius:3px;">'
+                    '<span style="color:#1565C0;font-weight:bold;">⏳ Queued for Auto-Record</span><br/>'
+                    '<span style="color:#666;font-size:0.9em;">Position: {pos}/{total} in queue. Will be processed by scheduler.</span>'
+                    '</div>'
+                ).format(pos=queue_pos + 1, total=queue_len)
+                return format_html(html)
+            else:
+                html = (
+                    '<div style="background:#f5f5f5;padding:12px;border-left:4px solid #999;border-radius:3px;">'
+                    '<span style="color:#666;">— Not in Queue</span><br/>'
+                    '<span style="color:#999;font-size:0.9em;">This result is not queued for auto-record processing.</span>'
+                    '</div>'
+                )
+                return format_html(html)
+        except Exception as e:
+            logger.warning(f"Error getting queue status for result {obj.id}: {e}")
+            html = (
+                '<div style="background:#f5f5f5;padding:10px;border-radius:3px;color:#999;">'
+                'Error reading queue status: {error}'
+                '</div>'
+            ).format(error=str(e)[:50])
+            return format_html(html)
+    
+    queue_status_display.short_description = 'Auto-Record Queue Status'
+    
+    def auto_record_status_display(self, obj):
+        """Display whether result meets auto-record conditions"""
+        from services.crawl_service.infrastructure.auto_recording import should_auto_record, get_auto_record_config
+        
+        cfg = get_auto_record_config()
+        if not cfg.get('enabled'):
+            return format_html(
+                '<span style="background:#9E9E9E;color:white;padding:4px 8px;border-radius:3px;">⚙️ Auto-record <b>DISABLED</b></span>'
+            )
+        
+        meets_criteria = should_auto_record(obj)
+        if meets_criteria:
+            return format_html(
+                '<span style="background:#4CAF50;color:white;padding:4px 8px;border-radius:3px;">✓ Meets auto-record criteria</span>'
+            )
+        else:
+            # Explain why it doesn't meet criteria
+            reasons = []
+            if cfg.get('require_in_stock', True) and not obj.in_stock:
+                reasons.append('Not in stock')
+            cwl = cfg.get('currency_whitelist') or []
+            if cwl and (obj.currency or '').upper() not in {c.upper() for c in cwl}:
+                reasons.append(f'Currency {obj.currency} not whitelisted')
+            allowed_domains = set((cfg.get('allowed_domains') or []))
+            if allowed_domains:
+                domain_name = None
+                try:
+                    domain_name = obj.job.product_url.domain.name
+                except Exception:
+                    domain_name = None
+                if not domain_name or domain_name not in allowed_domains:
+                    reasons.append('Domain not in whitelist')
+            
+            pd = obj.parsed_data or {}
+            sources = pd.get('price_sources') or []
+            if not sources:
+                reasons.append('No price sources')
+            else:
+                allowed_sources = set(cfg.get('allowed_sources') or [])
+                if allowed_sources and not (set(sources) & allowed_sources):
+                    reasons.append('No allowed sources found')
+                
+                if 'html_ml' in sources:
+                    extraction = (pd.get('price_extraction') or {})
+                    ml = extraction.get('extract_price_from_html_ml') or {}
+                    confidence = float(ml.get('confidence') or 0.0)
+                    min_conf = float(cfg.get('min_confidence') or 0.0)
+                    if confidence < min_conf:
+                        reasons.append(f'ML confidence {confidence:.3f} < {min_conf:.3f}')
+            
+            if obj.price is None or (float(obj.price) == 0.0):
+                reasons.append('Invalid or zero price')
+            
+            reason_text = '; '.join(reasons) if reasons else 'Unknown reason'
+            return format_html(
+                '<span style="background:#F44336;color:white;padding:4px 8px;border-radius:3px;">✗ Does not meet criteria: {}</span>',
+                reason_text
+            )
+    
+    auto_record_status_display.short_description = 'Auto-Record Evaluation'
     
     def parsed_data_display(self, obj):
         """Display parsed data with detailed price extraction sources"""
@@ -705,6 +1034,77 @@ class CrawlResultAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         # Results should be kept for audit trail
         return False
+
+    @admin.action(description="🧾 Write price to shared history")
+    def write_price_to_shared_history(self, request, queryset):
+        """Create PriceHistory entries in shared products module from CrawlResult.
+        - Price value is taken strictly from CrawlResult (no manual input).
+        - If the latest PriceHistory has the same price, skip and warn to avoid confusion.
+        """
+        from services.products_shared.infrastructure.django_models import PriceHistory
+        saved = 0
+        skipped = 0
+        errors = 0
+
+        for result in queryset.select_related('job', 'job__product_url'):
+            try:
+                if not result.job or not result.job.product_url:
+                    errors += 1
+                    continue
+
+                product_url = result.job.product_url
+                new_price = result.price
+                currency = result.currency
+                is_available = result.in_stock
+                scraped_at = result.crawled_at or timezone.now()
+
+                # Compare to latest entry to avoid duplicate consecutive records
+                last = PriceHistory.objects.filter(product_url=product_url).order_by('-scraped_at').first()
+                if last is not None and last.price == new_price:
+                    # Acknowledge recording (duplicate) without creating new history row
+                    result.history_recorded = True
+                    result.history_record_status = 'duplicate'
+                    result.history_recorded_at = scraped_at
+                    result.save(update_fields=['history_recorded', 'history_record_status', 'history_recorded_at'])
+                    skipped += 1
+                    continue
+
+                PriceHistory.objects.create(
+                    product_url=product_url,
+                    price=new_price,
+                    currency=currency or 'JPY',
+                    original_price=None,
+                    is_available=is_available,
+                    stock_status='',
+                    stock_quantity=None,
+                    source='MANUAL',
+                    scraped_at=scraped_at,
+                )
+                # Mark result as recorded
+                result.history_recorded = True
+                result.history_record_status = 'recorded'
+                result.history_recorded_at = scraped_at
+                result.save(update_fields=['history_recorded', 'history_record_status', 'history_recorded_at'])
+                saved += 1
+            except Exception as e:
+                logger.error(f"Failed to write price history for result {result.id}: {e}")
+                # Mark as failed attempt
+                try:
+                    result.history_recorded = False
+                    result.history_record_status = 'failed'
+                    result.history_recorded_at = timezone.now()
+                    result.save(update_fields=['history_recorded', 'history_record_status', 'history_recorded_at'])
+                except Exception:
+                    pass
+                errors += 1
+
+        # Feedback messages (clarify duplicates are not errors)
+        if saved:
+            self.message_user(request, f"✓ Wrote {saved} price history entrie(s)")
+        if skipped:
+            self.message_user(request, f"✗ Skipped {skipped} duplicate entrie(s) – data unchanged (not an error)", level=messages.WARNING)
+        if errors:
+            self.message_user(request, f"⚠️ {errors} entrie(s) could not be written", level=messages.ERROR)
 
 
 class BotConfigAdmin(admin.ModelAdmin):

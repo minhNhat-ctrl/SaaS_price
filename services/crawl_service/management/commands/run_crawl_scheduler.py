@@ -3,7 +3,6 @@ import signal
 import sys
 from django.core.management.base import BaseCommand
 from django.utils import timezone
-from services.crawl_service.models import CrawlJob, CrawlTask
 from services.crawl_service.scheduler import CrawlScheduler
 
 
@@ -71,31 +70,25 @@ class Command(BaseCommand):
     
     def _run_once(self, scheduler):
         """Run scheduler once"""
-        self.stdout.write('🔄 Running scheduler once...')
+        self.stdout.write('🔄 Running auto-record scheduler once...')
         
         try:
-            # Create tasks from pending jobs
-            created_count = scheduler.create_tasks()
-            self.stdout.write(
-                self.style.SUCCESS(f'✅ Created {created_count} tasks')
-            )
-            
-            # Handle timeouts
-            timeout_count = scheduler.handle_timeouts()
-            if timeout_count > 0:
+            # Process auto-record queue
+            stats = scheduler.process_auto_record_queue()
+            if stats["processed"] > 0:
                 self.stdout.write(
-                    self.style.WARNING(f'⏱️  Marked {timeout_count} tasks as timed out')
+                    self.style.SUCCESS(f'📝 Auto-record: processed={stats["processed"]} recorded={stats["recorded"]} duplicates={stats["duplicates"]} failed={stats["failed"]}')
                 )
+            else:
+                self.stdout.write(self.style.SUCCESS('✅ No items in queue to process'))
             
-            # Retry failed jobs
-            retry_count = scheduler.retry_failed_jobs()
-            if retry_count > 0:
-                self.stdout.write(
-                    self.style.SUCCESS(f'🔁 Retried {retry_count} failed jobs')
-                )
-            
-            # Show stats
-            self._show_stats()
+            # Show queue stats
+            from services.crawl_service.infrastructure.auto_record_queue import get_auto_record_queue_status
+            queue_status = get_auto_record_queue_status()
+            self.stdout.write(f'📊 Queue Status:')
+            self.stdout.write(f'  • Queue size: {queue_status["queue_size"]}')
+            self.stdout.write(f'  • Processing: {queue_status["processing_count"]}')
+            self.stdout.write(f'  • Failed: {queue_status["failed_count"]}')
         
         except Exception as e:
             self.stdout.write(self.style.ERROR(f'❌ Error: {str(e)}'))
@@ -107,11 +100,10 @@ class Command(BaseCommand):
         import time
         
         self.stdout.write(
-            self.style.SUCCESS(f'🚀 Scheduler running continuously (Ctrl+C to stop)...')
+            self.style.SUCCESS(f'🚀 Auto-record scheduler running continuously (Ctrl+C to stop)...')
         )
         self.stdout.write('')
         
-        last_timeout_check = timezone.now()
         cycle = 0
         
         while self.running:
@@ -119,29 +111,22 @@ class Command(BaseCommand):
                 cycle += 1
                 now = timezone.now()
                 
-                # Create tasks every `interval` seconds
-                self.stdout.write(f'[Cycle {cycle}] Creating tasks...')
-                created_count = scheduler.create_tasks()
-                self.stdout.write(
-                    self.style.SUCCESS(f'  ✅ Created {created_count} new tasks')
-                )
+                # Process auto-record queue
+                self.stdout.write(f'[Cycle {cycle}] Processing auto-record queue...')
+                stats = scheduler.process_auto_record_queue()
                 
-                # Check timeouts every `timeout_interval` seconds
-                if (now - last_timeout_check).total_seconds() >= timeout_interval:
-                    timeout_count = scheduler.handle_timeouts()
-                    if timeout_count > 0:
-                        self.stdout.write(
-                            self.style.WARNING(f'  ⏱️  Marked {timeout_count} tasks as timed out')
-                        )
-                    
-                    retry_count = scheduler.retry_failed_jobs()
-                    if retry_count > 0:
-                        self.stdout.write(
-                            self.style.SUCCESS(f'  🔁 Retried {retry_count} failed jobs')
-                        )
-                    
-                    last_timeout_check = now
-                    self._show_stats()
+                if stats["processed"] > 0:
+                    self.stdout.write(
+                        self.style.SUCCESS(f'  📝 Processed: {stats["processed"]} | Recorded: {stats["recorded"]} | Duplicates: {stats["duplicates"]} | Failed: {stats["failed"]}')
+                    )
+                else:
+                    self.stdout.write(self.style.SUCCESS(f'  ✅ Queue empty'))
+                
+                # Show queue status every 10 cycles
+                if cycle % 10 == 0:
+                    from services.crawl_service.infrastructure.auto_record_queue import get_auto_record_queue_status
+                    queue_status = get_auto_record_queue_status()
+                    self.stdout.write(f'  📊 Queue: {queue_status["queue_size"]} | Processing: {queue_status["processing_count"]} | Failed: {queue_status["failed_count"]}')
                 
                 self.stdout.write('')
                 
@@ -157,16 +142,3 @@ class Command(BaseCommand):
                 logger.exception(f'Error in scheduler cycle {cycle}')
                 # Continue running even on error
                 time.sleep(interval)
-    
-    def _show_stats(self):
-        """Display current scheduler statistics"""
-        pending_jobs = CrawlJob.objects.filter(status='pending').count()
-        running_jobs = CrawlJob.objects.filter(status='running').count()
-        completed_tasks = CrawlTask.objects.filter(status='completed').count()
-        assigned_tasks = CrawlTask.objects.filter(status='assigned').count()
-        
-        self.stdout.write('  📊 Stats:')
-        self.stdout.write(f'    • Pending jobs: {pending_jobs}')
-        self.stdout.write(f'    • Running jobs: {running_jobs}')
-        self.stdout.write(f'    • Assigned tasks: {assigned_tasks}')
-        self.stdout.write(f'    • Completed tasks: {completed_tasks}')

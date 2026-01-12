@@ -1,96 +1,49 @@
 """
-Scheduler service for creating tasks from jobs.
+Scheduler service for auto-record queue processing.
 
 Usage:
     from crawl_service.scheduler import CrawlScheduler
     scheduler = CrawlScheduler()
-    scheduler.create_tasks()
-    scheduler.handle_timeouts()
+    scheduler.process_auto_record_queue()
 """
 
 from django.utils import timezone
 from datetime import timedelta
 import logging
 
-from .models import CrawlJob, CrawlTask, ScheduleRule
-
 logger = logging.getLogger(__name__)
 
 
 class CrawlScheduler:
-    """Simple scheduler for crawl jobs"""
+    """Simple scheduler for auto-record queue processing"""
     
-    def create_tasks(self):
-        """Create tasks from pending jobs"""
-        pending_jobs = CrawlJob.objects.filter(
-            status='pending'
-        ).select_related('schedule_rule').order_by('-priority')
+    def process_auto_record_queue(self):
+        """Process async auto-record queue via Redis.
         
-        created = 0
-        for job in pending_jobs:
-            try:
-                # Check schedule
-                if job.next_run_at and timezone.now() < job.next_run_at:
-                    continue
-                
-                # Create task
-                task = CrawlTask.objects.create(job=job)
-                job.status = 'running'
-                job.save(update_fields=['status'])
-                
-                created += 1
-                logger.info(f"Created task {task.id} for job {job.url[:50]}")
+        Called periodically by management command or external scheduler.
+        """
+        try:
+            from .infrastructure.auto_record_queue import (
+                process_auto_record_queue,
+                retry_failed_recordings,
+                get_auto_record_queue_status,
+            )
             
-            except Exception as e:
-                logger.error(f"Error creating task for {job.url}: {e}")
-        
-        logger.info(f"Created {created} tasks")
-        return created
-    
-    def handle_timeouts(self):
-        """Handle timed-out tasks"""
-        now = timezone.now()
-        timeout_tasks = CrawlTask.objects.filter(
-            status='assigned',
-            timeout_at__lt=now
-        )
-        
-        handled = 0
-        for task in timeout_tasks:
-            try:
-                task.status = 'failed'
-                task.save(update_fields=['status'])
-                
-                task.job.status = 'timeout'
-                task.job.retry_count += 1
-                task.job.save(update_fields=['status', 'retry_count'])
-                
-                handled += 1
-                logger.warning(f"Task {task.id} timeout")
+            # Process main queue
+            stats = process_auto_record_queue(batch_size=100, max_retries=3)
             
-            except Exception as e:
-                logger.error(f"Error handling timeout: {e}")
-        
-        logger.info(f"Handled {handled} timeout tasks")
-        return handled
-    
-    def retry_failed_jobs(self):
-        """Retry failed jobs that have retries left"""
-        failed_jobs = CrawlJob.objects.filter(
-            status='failed',
-            retry_count__lt=models.F('max_retries')
-        )
-        
-        retried = 0
-        for job in failed_jobs:
-            try:
-                job.status = 'pending'
-                job.last_error = None
-                job.save(update_fields=['status', 'last_error'])
-                retried += 1
+            # Periodically retry permanently failed (every N calls)
+            if stats["processed"] % 500 == 0:
+                retried = retry_failed_recordings(limit=20)
+                if retried > 0:
+                    logger.info(f"Retried {retried} permanently failed recordings")
             
-            except Exception as e:
-                logger.error(f"Error retrying job {job.id}: {e}")
-        
-        logger.info(f"Retried {retried} failed jobs")
-        return retried
+            # Log status
+            queue_status = get_auto_record_queue_status()
+            if queue_status["queue_size"] > 0 or stats["recorded"] > 0:
+                logger.info(f"Auto-record: processed={stats['processed']} recorded={stats['recorded']} duplicates={stats['duplicates']} failed={stats['failed']} queue_remaining={queue_status['queue_size']}")
+            
+            return stats
+        except Exception as e:
+            logger.error(f"Error processing auto-record queue: {e}", exc_info=True)
+            return {"processed": 0, "recorded": 0, "failed": 0, "duplicates": 0}

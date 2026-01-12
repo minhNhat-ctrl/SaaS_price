@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "allowed_sources": [
+    "html_ml"
+  ],
+  "min_confidence": 0.7,
+  "require_in_stock": false,
+  "allowed_domains": [],
+  "currency_whitelist": [],
+  "_cron_config": {
+    "_comment": "Cron configuration for auto-record scheduler",
+    "scheduler_enabled": true,
+    "interval_seconds": 30,
+    "batch_size": 101,
+    "max_retries": 3,
+    "retry_failed_every_n_cycles": 50,
+    "retry_failed_limit": 20,
+    "log_queue_status_every_n_cycles": 10
+  }
+}
