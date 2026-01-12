@@ -1,0 +1,127 @@
+{% extends "admin/index.html" %}
+{% load i18n static %}
+
+{% comment %}
+Override django-tenants admin template to show SHARED_APPS models
+{% endcomment %}
+
+{% block content %}
+<div id="content-main">
+    {% if app_list %}
+        {% for app in app_list %}
+            <!-- Special handling for crawl_service app -->
+            {% if app.app_label == 'crawl_service' %}
+                <div class="app-{{ app.app_label }} module">
+                    <table style="width: 100%">
+                        {% if app.app_url %}
+                            <caption class="{{ app.public_or_tenant }}">
+                                <a href="{{ app.app_url }}" class="section" title="{% blocktranslate with name=app.name %}Models in the {{ name }} application{% endblocktranslate %}">{{ app.name }}</a>
+                            </caption>
+                        {% else %}
+                            <caption class="{{ app.public_or_tenant }}">
+                                <span class="section" title="{% blocktranslate with name=app.name %}Models in the {{ name }} application{% endblocktranslate %}">{{ app.name }}</span>
+                            </caption>
+                        {% endif %}
+                    
+                    {% for model in app.models %}
+                        <tr class="model-{{ model.object_name|lower }}">
+                            {% if model.admin_url %}
+                                <th scope="row"><a href="{{ model.admin_url }}">{{ model.name }}</a></th>
+                            {% else %}
+                                <th scope="row">{{ model.name }}</th>
+                            {% endif %}
+
+                            {% if model.add_url %}
+                                <td><a href="{{ model.add_url }}" class="addlink">{% translate 'Add' %}</a></td>
+                            {% else %}
+                                <td>&nbsp;</td>
+                            {% endif %}
+
+                            {% if model.admin_url %}
+                                {% if model.view_only %}
+                                    <td><a href="{{ model.admin_url }}" class="viewlink">{% translate 'View' %}</a></td>
+                                {% else %}
+                                    <td><a href="{{ model.admin_url }}" class="changelink">{% translate 'Change' %}</a></td>
+                                {% endif %}
+                            {% else %}
+                                <td>&nbsp;</td>
+                            {% endif %}
+                        </tr>
+                    {% endfor %}
+                    
+                    <!-- Add Auto-Record Config link -->
+                    <tr class="auto-record-config-link" style="background-color: #fffacd; border-top: 2px solid #ffb347;">
+                        <th scope="row" style="padding: 12px 15px;">
+                            <a href="{% url 'admin:admin_crawl_auto_record_config' %}" style="color: #ff8c00; font-weight: bold;">⚙️ Auto-Record Configuration</a>
+                        </th>
+                        <td style="padding: 12px 15px;">
+                            <span style="color: #999; font-size: 11px;">Scheduler</span>
+                        </td>
+                        <td style="padding: 12px 15px;">
+                            <a href="{% url 'admin:admin_crawl_auto_record_config' %}" class="viewlink" style="color: #ff8c00; font-weight: bold;">Configure</a>
+                        </td>
+                    </tr>
+                    
+                    <!-- Add JobResetRule Scheduler Manager link -->
+                    <tr class="job-reset-rule-scheduler-link" style="background-color: #e8f5e9; border-top: 2px solid #4caf50;">
+                        <th scope="row" style="padding: 12px 15px;">
+                            <a href="{% url 'admin:admin_crawl_job_reset_rule_scheduler' %}" style="color: #2e7d32; font-weight: bold;">🕒 JobResetRule Scheduler</a>
+                        </th>
+                        <td style="padding: 12px 15px;">
+                            <span style="color: #999; font-size: 11px;">Frequency Manager</span>
+                        </td>
+                        <td style="padding: 12px 15px;">
+                            <a href="{% url 'admin:admin_crawl_job_reset_rule_scheduler' %}" class="viewlink" style="color: #2e7d32; font-weight: bold;">Manage</a>
+                        </td>
+                    </tr>
+                    </table>
+                </div>
+            {% else %}
+                <!-- Standard app display -->
+                <div class="app-{{ app.app_label }} module">
+                    <table style="width: 100%">
+                        {% if app.app_url %}
+                            <caption class="{{ app.public_or_tenant }}">
+                                <a href="{{ app.app_url }}" class="section" title="{% blocktranslate with name=app.name %}Models in the {{ name }} application{% endblocktranslate %}">{{ app.name }}</a>
+                            </caption>
+                        {% else %}
+                            <caption class="{{ app.public_or_tenant }}">
+                                <span class="section" title="{% blocktranslate with name=app.name %}Models in the {{ name }} application{% endblocktranslate %}">{{ app.name }}</span>
+                            </caption>
+                        {% endif %}
+                    
+                    {% for model in app.models %}
+                        <tr class="model-{{ model.object_name|lower }}">
+                            {% if model.admin_url %}
+                                <th scope="row"><a href="{{ model.admin_url }}">{{ model.name }}</a></th>
+                            {% else %}
+                                <th scope="row">{{ model.name }}</th>
+                            {% endif %}
+
+                            {% if model.add_url %}
+                                <td><a href="{{ model.add_url }}" class="addlink">{% translate 'Add' %}</a></td>
+                            {% else %}
+                                <td>&nbsp;</td>
+                            {% endif %}
+
+                            {% if model.admin_url %}
+                                {% if model.view_only %}
+                                    <td><a href="{{ model.admin_url }}" class="viewlink">{% translate 'View' %}</a></td>
+                                {% else %}
+                                    <td><a href="{{ model.admin_url }}" class="changelink">{% translate 'Change' %}</a></td>
+                                {% endif %}
+                            {% else %}
+                                <td>&nbsp;</td>
+                            {% endif %}
+                        </tr>
+                    {% endfor %}
+                    </table>
+                </div>
+            {% endif %}
+        {% endfor %}
+    {% else %}
+        <p>{% translate "You do not have permission to view or edit anything." %}</p>
+    {% endif %}
+</div>
+{% endblock %}
+

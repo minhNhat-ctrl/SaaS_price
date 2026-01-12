@@ -1,0 +1,192 @@
+{% extends "admin/base.html" %}
+{% load static %}
+
+{% block title %}{{ title }} | {{ site_title }}{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    <h1>{{ title }}</h1>
+    
+    {% if messages %}
+        <div class="messagelist">
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}" style="padding: 10px; margin: 10px 0; border-radius: 3px;">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+    
+    <!-- Scheduler Status Panel -->
+    <div style="background: #f9f9f9; border: 1px solid #ddd; border-radius: 5px; padding: 20px; margin-bottom: 30px;">
+        <h2>Scheduler Status</h2>
+        
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
+            <!-- Status Badge -->
+            <div style="padding: 15px; background: white; border-radius: 3px;">
+                <strong>Status:</strong>
+                {% if scheduler_running %}
+                    <span style="color: green; font-weight: bold; font-size: 14px;">● Running</span>
+                {% else %}
+                    <span style="color: red; font-weight: bold; font-size: 14px;">● Stopped</span>
+                {% endif %}
+            </div>
+            
+            <!-- Cycles -->
+            <div style="padding: 15px; background: white; border-radius: 3px;">
+                <strong>Total Cycles:</strong> {{ scheduler_stats.total_cycles }}
+            </div>
+            
+            <!-- Rules Executed -->
+            <div style="padding: 15px; background: white; border-radius: 3px;">
+                <strong>Rules Executed:</strong> {{ scheduler_stats.total_rules_executed }}
+            </div>
+            
+            <!-- Jobs Reset -->
+            <div style="padding: 15px; background: white; border-radius: 3px;">
+                <strong>Jobs Reset:</strong> {{ scheduler_stats.total_jobs_reset }}
+            </div>
+            
+            <!-- Started -->
+            <div style="padding: 15px; background: white; border-radius: 3px;">
+                <strong>Started:</strong> {{ scheduler_stats.started_at|default:"—" }}
+            </div>
+            
+            <!-- Last Run -->
+            <div style="padding: 15px; background: white; border-radius: 3px;">
+                <strong>Last Run:</strong> {{ scheduler_stats.last_run_at|default:"—" }}
+            </div>
+        </div>
+        
+        {% if scheduler_stats.last_error %}
+            <div style="margin-top: 15px; padding: 10px; background: #ffebee; border: 1px solid #ef5350; border-radius: 3px; color: #c62828;">
+                <strong>Last Error:</strong> {{ scheduler_stats.last_error }}
+            </div>
+        {% endif %}
+    </div>
+    
+    <!-- Control Buttons -->
+    <div style="margin-bottom: 30px;">
+        <form method="post" style="display: inline;">
+            {% csrf_token %}
+            {% if scheduler_running %}
+                <button type="submit" name="action" value="stop_scheduler" class="button" style="background: #dc3545; color: white; padding: 10px 20px; border: none; border-radius: 3px; cursor: pointer;">
+                    ⏹️ Stop Scheduler
+                </button>
+            {% else %}
+                <button type="submit" name="action" value="start_scheduler" class="button" style="background: #28a745; color: white; padding: 10px 20px; border: none; border-radius: 3px; cursor: pointer;">
+                    ▶️ Start Scheduler
+                </button>
+            {% endif %}
+            
+            <button type="submit" name="action" value="run_now" class="button" style="background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 3px; cursor: pointer; margin-left: 10px;">
+                🔄 Run Now
+            </button>
+        </form>
+    </div>
+    
+    <!-- JobResetRule List -->
+    <div style="background: white; border: 1px solid #ddd; border-radius: 5px; padding: 20px;">
+        <h2>Enabled JobResetRules</h2>
+        
+        {% if rules %}
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background: #f9f9f9; border-bottom: 2px solid #ddd;">
+                        <th style="padding: 10px; text-align: left;">Rule Name</th>
+                        <th style="padding: 10px; text-align: left;">Selection</th>
+                        <th style="padding: 10px; text-align: left;">Frequency</th>
+                        <th style="padding: 10px; text-align: left;">Last Execution</th>
+                        <th style="padding: 10px; text-align: left;">Next Execution</th>
+                        <th style="padding: 10px; text-align: left;">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for rule in rules %}
+                        <tr style="border-bottom: 1px solid #eee;">
+                            <td style="padding: 10px;">
+                                <a href="{% url 'admin:crawl_service_jobresetrule_change' rule.id %}">{{ rule.name }}</a>
+                            </td>
+                            <td style="padding: 10px;">
+                                {% if rule.selection_type == 'all' %}
+                                    <span style="background: #e3f2fd; padding: 2px 6px; border-radius: 3px;">All Jobs</span>
+                                {% elif rule.selection_type == 'domain' %}
+                                    <span title="{{ rule.domain.name }}">{{ rule.domain.name|truncatewords:2 }}</span>
+                                {% elif rule.selection_type == 'domain_regex' %}
+                                    <code style="background: #f5f5f5; padding: 2px 4px;">{{ rule.domain_regex }}</code>
+                                {% elif rule.selection_type == 'url_regex' %}
+                                    <code style="background: #f5f5f5; padding: 2px 4px;">{{ rule.url_pattern|truncatewords:3 }}</code>
+                                {% elif rule.selection_type == 'rule' %}
+                                    <span style="background: #e8f5e9; padding: 2px 6px; border-radius: 3px;">{{ rule.rule_tag }}</span>
+                                {% endif %}
+                            </td>
+                            <td style="padding: 10px;">
+                                <strong>{{ rule.frequency_hours }}h</strong>
+                            </td>
+                            <td style="padding: 10px;">
+                                {% if rule.last_execution %}
+                                    <small>{{ rule.last_execution|date:"Y-m-d H:i:s" }}</small>
+                                {% else %}
+                                    <span style="color: #999;">Never</span>
+                                {% endif %}
+                            </td>
+                            <td style="padding: 10px;">
+                                {% if rule.next_execution %}
+                                    <small>{{ rule.next_execution|date:"Y-m-d H:i:s" }}</small>
+                                {% else %}
+                                    <span style="color: #999;">—</span>
+                                {% endif %}
+                            </td>
+                            <td style="padding: 10px;">
+                                {% if rule.enabled %}
+                                    <span style="color: green; font-weight: bold;">✓ Enabled</span>
+                                {% else %}
+                                    <span style="color: #999;">✗ Disabled</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p style="color: #999;">No rules configured. <a href="{% url 'admin:crawl_service_jobresetrule_changelist' %}">Create JobResetRules</a></p>
+        {% endif %}
+    </div>
+    
+</div>
+{% endblock %}
+
+{% block extrahead %}
+<style>
+    .alert {
+        padding: 12px;
+        margin: 10px 0;
+        border-radius: 3px;
+    }
+    
+    .alert-success {
+        background: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+    }
+    
+    .alert-error {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+    }
+    
+    .button {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+    }
+    
+    .button:hover {
+        opacity: 0.9;
+    }
+</style>
+{% endblock %}

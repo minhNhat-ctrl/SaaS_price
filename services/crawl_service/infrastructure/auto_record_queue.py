@@ -60,9 +60,15 @@ def enqueue_auto_record(result_id: str) -> bool:
 
 
 def process_auto_record_queue(batch_size: int = 50, max_retries: int = 3) -> dict:
-    """Process auto-record queue.
+    """Process auto-record queue with status tracking.
     
     Called periodically by scheduler (e.g., every 5 seconds).
+    
+    Updates CrawlResult.auto_record_eligibility_status:
+    - 'processing' when dequeued
+    - 'completed' on success
+    - 'failed' on permanent failure
+    - 'queued' when re-enqueued for retry
     
     Args:
         batch_size: Max results to process per call
@@ -93,8 +99,11 @@ def process_auto_record_queue(batch_size: int = 50, max_retries: int = 3) -> dic
                 logger.debug(f"Result {result_id} already being processed, skipping")
                 continue
             
-            # Mark as processing
+            # Mark as processing (both Redis and DB)
             client.sadd(AUTO_RECORD_PROCESSING, result_id)
+            CrawlResult.objects.filter(id=result_id).update(
+                auto_record_eligibility_status='processing'
+            )
             
             try:
                 # Try to get result from DB
@@ -109,15 +118,24 @@ def process_auto_record_queue(batch_size: int = 50, max_retries: int = 3) -> dic
                 if result.history_recorded:
                     logger.debug(f"Result {result_id} already recorded, skipping")
                     client.srem(AUTO_RECORD_PROCESSING, result_id)
+                    CrawlResult.objects.filter(id=result_id).update(
+                        auto_record_eligibility_status='completed',
+                        auto_record_ineligible_reason='Already recorded'
+                    )
                     stats["processed"] += 1
                     continue
                 
                 # Try to auto-record
                 from .auto_recording import should_auto_record, write_price_history_for_result
                 
-                if not should_auto_record(result):
-                    logger.debug(f"Result {result_id} does not meet auto-record criteria")
+                is_eligible, reason = should_auto_record(result)
+                if not is_eligible:
+                    logger.debug(f"Result {result_id} does not meet auto-record criteria: {reason}")
                     client.srem(AUTO_RECORD_PROCESSING, result_id)
+                    CrawlResult.objects.filter(id=result_id).update(
+                        auto_record_eligibility_status='ineligible',
+                        auto_record_ineligible_reason=reason
+                    )
                     stats["processed"] += 1
                     continue
                 
@@ -126,9 +144,16 @@ def process_auto_record_queue(batch_size: int = 50, max_retries: int = 3) -> dic
                 
                 if success:
                     logger.info(f"✓ Auto-recorded result {result_id} to PriceHistory")
+                    CrawlResult.objects.filter(id=result_id).update(
+                        auto_record_eligibility_status='completed'
+                    )
                     stats["recorded"] += 1
                 elif result.history_record_status == 'duplicate':
                     logger.debug(f"Result {result_id} is duplicate (same price as latest)")
+                    CrawlResult.objects.filter(id=result_id).update(
+                        auto_record_eligibility_status='completed',
+                        auto_record_ineligible_reason='Duplicate price (same as latest)'
+                    )
                     stats["duplicates"] += 1
                 else:
                     logger.warning(f"Result {result_id} recording failed, marking for retry")
@@ -139,6 +164,10 @@ def process_auto_record_queue(batch_size: int = 50, max_retries: int = 3) -> dic
                         # Retry: re-enqueue at end of queue
                         client.rpush(AUTO_RECORD_QUEUE, result_id)
                         client.set(f"crawl:auto_record:failures:{result_id}", failure_count, ex=3600)
+                        CrawlResult.objects.filter(id=result_id).update(
+                            auto_record_eligibility_status='queued',
+                            auto_record_ineligible_reason=f'Retry {failure_count}/{max_retries}'
+                        )
                         logger.debug(f"Re-enqueued result {result_id} for retry (attempt {failure_count})")
                         stats["failed"] += 1
                     else:
@@ -146,6 +175,10 @@ def process_auto_record_queue(batch_size: int = 50, max_retries: int = 3) -> dic
                         logger.error(f"Result {result_id} failed after {max_retries} retries, giving up")
                         client.sadd(AUTO_RECORD_FAILED, result_id)
                         client.delete(f"crawl:auto_record:failures:{result_id}")
+                        CrawlResult.objects.filter(id=result_id).update(
+                            auto_record_eligibility_status='failed',
+                            auto_record_ineligible_reason=f'Failed after {max_retries} retries'
+                        )
                         stats["failed"] += 1
                 
                 # Mark as processed
@@ -155,6 +188,10 @@ def process_auto_record_queue(batch_size: int = 50, max_retries: int = 3) -> dic
             except Exception as e:
                 logger.error(f"Error processing result {result_id}: {e}", exc_info=True)
                 client.srem(AUTO_RECORD_PROCESSING, result_id)
+                CrawlResult.objects.filter(id=result_id).update(
+                    auto_record_eligibility_status='failed',
+                    auto_record_ineligible_reason=f'Processing error: {str(e)[:150]}'
+                )
                 stats["processed"] += 1
         
         return stats

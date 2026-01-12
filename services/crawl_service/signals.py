@@ -108,10 +108,13 @@ def apply_rule_on_save(sender, instance: JobResetRule, created, **kwargs):
 @receiver(post_save, sender='crawl_service.CrawlResult')
 def auto_record_crawl_result(sender, instance, created, **kwargs):
     """
-    Enqueue CrawlResult for async auto-recording.
+    Immediately evaluate eligibility and mark status for admin visibility.
     
-    Does NOT block on record write - just enqueues to Redis.
-    Actual recording happens asynchronously via scheduler.
+    Flow:
+    1. Check if auto-record globally enabled
+    2. Evaluate result against criteria (should_auto_record)
+    3. Mark eligibility status with reason (if ineligible)
+    4. If eligible, enqueue to Redis and mark 'queued'
     
     Only runs on creation (not update).
     """
@@ -119,22 +122,66 @@ def auto_record_crawl_result(sender, instance, created, **kwargs):
         return  # Only for new results
     
     try:
-        from services.crawl_service.infrastructure.auto_recording import get_auto_record_config
+        from services.crawl_service.infrastructure.auto_recording import (
+            get_auto_record_config,
+            should_auto_record
+        )
         from services.crawl_service.infrastructure.auto_record_queue import enqueue_auto_record
+        from services.crawl_service.models import CrawlResult
         
         cfg = get_auto_record_config()
-        result_id = getattr(instance, 'id', '?')
+        result_id = str(instance.id)
         
-        # Check if auto-record is enabled
+        # Check if auto-record globally disabled
         if not cfg.get('enabled'):
+            CrawlResult.objects.filter(id=instance.id).update(
+                auto_record_eligibility_status='ineligible',
+                auto_record_ineligible_reason='Auto-record globally disabled in config'
+            )
             logger.debug(f"CrawlResult {result_id}: Auto-record disabled in config")
             return
         
-        # Enqueue for async processing (non-blocking)
-        if enqueue_auto_record(str(result_id)):
-            logger.debug(f"✓ Enqueued CrawlResult {result_id} for auto-record processing")
+        # Evaluate eligibility criteria
+        is_eligible, reason = should_auto_record(instance)
+        
+        if not is_eligible:
+            # Mark ineligible with reason
+            CrawlResult.objects.filter(id=instance.id).update(
+                auto_record_eligibility_status='ineligible',
+                auto_record_ineligible_reason=reason or 'Does not meet criteria'
+            )
+            logger.debug(f"CrawlResult {result_id}: Ineligible - {reason}")
+            return
+        
+        # Eligible: mark and enqueue
+        CrawlResult.objects.filter(id=instance.id).update(
+            auto_record_eligibility_status='eligible',
+            auto_record_ineligible_reason=''
+        )
+        
+        # Enqueue for async processing
+        if enqueue_auto_record(result_id):
+            # Update status to queued
+            CrawlResult.objects.filter(id=instance.id).update(
+                auto_record_eligibility_status='queued'
+            )
+            logger.debug(f"✓ Enqueued CrawlResult {result_id} for auto-record (status: queued)")
         else:
-            logger.warning(f"✗ Failed to enqueue CrawlResult {result_id} for auto-record")
+            # Enqueue failed
+            CrawlResult.objects.filter(id=instance.id).update(
+                auto_record_eligibility_status='failed',
+                auto_record_ineligible_reason='Failed to enqueue to Redis'
+            )
+            logger.warning(f"✗ Failed to enqueue CrawlResult {result_id}")
             
     except Exception as e:
-        logger.error(f"✗ Auto-record signal failed for result {getattr(instance, 'id', '?')}: {e}", exc_info=True)
+        # Mark as failed with exception message
+        try:
+            from services.crawl_service.models import CrawlResult
+            CrawlResult.objects.filter(id=instance.id).update(
+                auto_record_eligibility_status='failed',
+                auto_record_ineligible_reason=f'Signal error: {str(e)[:180]}'
+            )
+        except:
+            pass
+        logger.error(f"✗ Auto-record signal failed for result {result_id}: {e}", exc_info=True)

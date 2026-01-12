@@ -1,0 +1,290 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block extrastyle %}
+<style>
+  .scheduler-status-panel {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 20px;
+    margin-bottom: 30px;
+  }
+  .status-badge {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 14px;
+  }
+  .status-running {
+    background: #28a745;
+    color: white;
+  }
+  .status-stopped {
+    background: #6c757d;
+    color: white;
+  }
+  .status-disabled {
+    background: #dc3545;
+    color: white;
+  }
+  .scheduler-controls {
+    margin-top: 15px;
+    display: flex;
+    gap: 10px;
+  }
+  .scheduler-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-top: 20px;
+  }
+  .stat-card {
+    background: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 12px;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: #666;
+    text-transform: uppercase;
+    font-weight: bold;
+    margin-bottom: 4px;
+  }
+  .stat-value {
+    font-size: 20px;
+    color: #333;
+    font-weight: bold;
+  }
+  .config-section {
+    margin-bottom: 25px;
+    padding-bottom: 25px;
+    border-bottom: 2px solid #e0e0e0;
+  }
+  .config-section h3 {
+    color: #333;
+    margin-bottom: 15px;
+    font-size: 16px;
+  }
+  .section-description {
+    color: #666;
+    font-size: 13px;
+    margin-bottom: 15px;
+    padding: 10px;
+    background: #f0f8ff;
+    border-left: 3px solid #2196F3;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="module">
+  <h2>🔄 Auto-Record Configuration & Scheduler Manager</h2>
+  
+  <!-- Scheduler Status Panel -->
+  <div class="scheduler-status-panel">
+    <h3>📊 Scheduler Status</h3>
+    <div>
+      <strong>Status: </strong>
+      {% if scheduler_status.running %}
+        <span class="status-badge status-running">⚙️ RUNNING</span>
+      {% elif scheduler_status.config.enabled %}
+        <span class="status-badge status-stopped">⏹️ STOPPED</span>
+      {% else %}
+        <span class="status-badge status-disabled">❌ DISABLED</span>
+      {% endif %}
+    </div>
+    
+    {% if scheduler_status.running %}
+      <div style="margin-top: 10px; color: #28a745;">
+        <strong>✓ Background scheduler is actively processing the auto-record queue</strong>
+      </div>
+    {% else %}
+      <div style="margin-top: 10px; color: #666;">
+        <em>Scheduler is not running. Click "Start Scheduler" to begin processing.</em>
+      </div>
+    {% endif %}
+    
+    <!-- Scheduler Controls -->
+    <div class="scheduler-controls">
+      <form method="post" style="display: inline;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="start_scheduler">
+        <button type="submit" class="button" {% if scheduler_status.running %}disabled{% endif %} 
+                style="background: #28a745; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">
+          ▶️ Start Scheduler
+        </button>
+      </form>
+      
+      <form method="post" style="display: inline;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="stop_scheduler">
+        <button type="submit" class="button" {% if not scheduler_status.running %}disabled{% endif %}
+                style="background: #dc3545; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">
+          ⏹️ Stop Scheduler
+        </button>
+      </form>
+      
+      <form method="post" style="display: inline;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="reload_config">
+        <button type="submit" class="button"
+                style="background: #17a2b8; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">
+          🔄 Reload Config
+        </button>
+      </form>
+    </div>
+    
+    <!-- Scheduler Stats -->
+    <div class="scheduler-stats">
+      <div class="stat-card">
+        <div class="stat-label">Total Cycles</div>
+        <div class="stat-value">{{ scheduler_status.stats.total_cycles|default:"0" }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Processed</div>
+        <div class="stat-value">{{ scheduler_status.stats.total_processed|default:"0" }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Recorded</div>
+        <div class="stat-value" style="color: #28a745;">{{ scheduler_status.stats.total_recorded|default:"0" }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Failed</div>
+        <div class="stat-value" style="color: #dc3545;">{{ scheduler_status.stats.total_failed|default:"0" }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Queue Size</div>
+        <div class="stat-value" style="color: #2196F3;">{{ scheduler_status.queue.queue_size|default:"0" }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Processing</div>
+        <div class="stat-value" style="color: #FF9800;">{{ scheduler_status.queue.processing_size|default:"0" }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Failed Set</div>
+        <div class="stat-value" style="color: #F44336;">{{ scheduler_status.queue.failed_size|default:"0" }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Interval</div>
+        <div class="stat-value" style="font-size: 16px;">{{ scheduler_status.config.interval|default:"30" }}s</div>
+      </div>
+    </div>
+    
+    {% if scheduler_status.stats.started_at %}
+    <div style="margin-top: 15px; font-size: 12px; color: #666;">
+      <strong>Started:</strong> {{ scheduler_status.stats.started_at }}<br>
+      {% if scheduler_status.stats.last_run_at %}
+      <strong>Last Run:</strong> {{ scheduler_status.stats.last_run_at }}
+      {% endif %}
+    </div>
+    {% endif %}
+    
+    {% if scheduler_status.stats.last_error %}
+    <div style="margin-top: 10px; padding: 10px; background: #ffebee; border-left: 3px solid #f44336; color: #c62828;">
+      <strong>⚠️ Last Error:</strong> {{ scheduler_status.stats.last_error }}
+    </div>
+    {% endif %}
+  </div>
+  
+  <!-- Configuration Form -->
+  <form method="post" action="">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="save_config">
+    
+    <!-- Auto-Record Criteria -->
+    <div class="config-section">
+      <h3>🎯 Auto-Record Criteria</h3>
+      <div class="section-description">
+        Configure conditions that CrawlResults must meet to be automatically recorded to PriceHistory.
+      </div>
+      
+      <fieldset class="module aligned">
+        <div class="form-row">
+          <label for="id_enabled">Enabled</label>
+          <input type="checkbox" id="id_enabled" name="enabled" {% if cfg.enabled %}checked{% endif %} />
+          <p class="help">Master switch for auto-record feature</p>
+        </div>
+        <div class="form-row">
+          <label for="id_allowed_sources">Allowed Sources</label>
+          <input type="text" id="id_allowed_sources" name="allowed_sources" style="width:60%" 
+                 placeholder="jsonld, og, microdata, script_data, html_ml" 
+                 value="{{ cfg.allowed_sources|join:", " }}" />
+          <p class="help">Comma-separated. Must match entries in CrawlResult parsed_data.price_sources.</p>
+        </div>
+        <div class="form-row">
+          <label for="id_min_confidence">Min ML Confidence</label>
+          <input type="number" id="id_min_confidence" name="min_confidence" step="0.01" min="0" max="1" 
+                 value="{{ cfg.min_confidence }}" style="width: 100px;" />
+          <p class="help">Applies when html_ml is present in sources (0.0 - 1.0).</p>
+        </div>
+        <div class="form-row">
+          <label for="id_require_in_stock">Require In Stock</label>
+          <input type="checkbox" id="id_require_in_stock" name="require_in_stock" {% if cfg.require_in_stock %}checked{% endif %} />
+          <p class="help">Only record results with in_stock=True</p>
+        </div>
+        <div class="form-row">
+          <label for="id_allowed_domains">Allowed Domains</label>
+          <input type="text" id="id_allowed_domains" name="allowed_domains" style="width:60%" 
+                 placeholder="example.com, shop.jp" 
+                 value="{{ cfg.allowed_domains|join:", " }}" />
+          <p class="help">Optional. Comma-separated list. Empty means any domain.</p>
+        </div>
+        <div class="form-row">
+          <label for="id_currency_whitelist">Currency Whitelist</label>
+          <input type="text" id="id_currency_whitelist" name="currency_whitelist" style="width:60%" 
+                 placeholder="JPY, USD, VND" 
+                 value="{{ cfg.currency_whitelist|join:", " }}" />
+          <p class="help">Optional. Comma-separated ISO codes. Empty allows any currency.</p>
+        </div>
+      </fieldset>
+    </div>
+    
+    <!-- Scheduler Configuration -->
+    <div class="config-section">
+      <h3>⚙️ Scheduler Configuration</h3>
+      <div class="section-description">
+        Configure how the background scheduler processes the auto-record queue.
+      </div>
+      
+      <fieldset class="module aligned">
+        <div class="form-row">
+          <label for="id_scheduler_enabled">Scheduler Enabled</label>
+          <input type="checkbox" id="id_scheduler_enabled" name="scheduler_enabled" 
+                 {% if cron_config.scheduler_enabled %}checked{% endif %} />
+          <p class="help">Allow scheduler to start (requires restart if already running)</p>
+        </div>
+        <div class="form-row">
+          <label for="id_interval_seconds">Interval (seconds)</label>
+          <input type="number" id="id_interval_seconds" name="interval_seconds" min="5" max="300" 
+                 value="{{ cron_config.interval_seconds|default:'30' }}" style="width: 100px;" />
+          <p class="help">How often to process queue (5-300 seconds, default: 30)</p>
+        </div>
+        <div class="form-row">
+          <label for="id_batch_size">Batch Size</label>
+          <input type="number" id="id_batch_size" name="batch_size" min="10" max="500" 
+                 value="{{ cron_config.batch_size|default:'100' }}" style="width: 100px;" />
+          <p class="help">Max items to process per cycle (10-500, default: 100)</p>
+        </div>
+        <div class="form-row">
+          <label for="id_max_retries">Max Retries</label>
+          <input type="number" id="id_max_retries" name="max_retries" min="1" max="10" 
+                 value="{{ cron_config.max_retries|default:'3' }}" style="width: 100px;" />
+          <p class="help">Retry attempts before moving to failed set (1-10, default: 3)</p>
+        </div>
+      </fieldset>
+    </div>
+    
+    <div class="submit-row">
+      <button type="submit" class="default" style="padding: 10px 20px; font-size: 14px;">
+        💾 Save Configuration
+      </button>
+      <p class="help" style="display: inline; margin-left: 15px; color: #666;">
+        Changes take effect immediately. Scheduler will reload config on next cycle if running.
+      </p>
+    </div>
+  </form>
+</div>
+{% endblock %}

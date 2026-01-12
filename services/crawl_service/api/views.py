@@ -368,7 +368,7 @@ class BotSubmitResultView(APIView):
             # ===== Handle Success Case =====
             if success:
                 # Create or update result (overwrites previous attempts for the job)
-                result, _ = CrawlResult.objects.update_or_create(
+                result, created = CrawlResult.objects.update_or_create(
                     job=job,
                     defaults={
                         'price': data['price'],
@@ -378,8 +378,40 @@ class BotSubmitResultView(APIView):
                         'raw_html': data.get('raw_html'),
                         'parsed_data': data.get('parsed_data', {}),
                         'crawled_at': timezone.now(),
+                        # IMPORTANT: Reset recording status when result is updated
+                        # If result was previously recorded/failed, reset to 'none' so auto-record can process again
+                        'history_record_status': 'none',
+                        'history_recorded': False,
+                        'history_recorded_at': None,
                     }
                 )
+                
+                # IMPORTANT: Manually trigger eligibility evaluation for updated results
+                # Signal only fires on created=True, but update_or_create may update existing result
+                if not created:
+                    try:
+                        from ..infrastructure.auto_recording import should_auto_record, get_auto_record_config
+                        from ..infrastructure.auto_record_queue import enqueue_auto_record
+                        
+                        cfg = get_auto_record_config()
+                        if cfg.get('enabled'):
+                            is_eligible, reason = should_auto_record(result)
+                            if is_eligible:
+                                result.auto_record_eligibility_status = 'eligible'
+                                result.save(update_fields=['auto_record_eligibility_status'])
+                                if enqueue_auto_record(str(result.id)):
+                                    result.auto_record_eligibility_status = 'queued'
+                                    result.save(update_fields=['auto_record_eligibility_status'])
+                            else:
+                                result.auto_record_eligibility_status = 'ineligible'
+                                result.auto_record_ineligible_reason = reason
+                                result.save(update_fields=['auto_record_eligibility_status', 'auto_record_ineligible_reason'])
+                        else:
+                            result.auto_record_eligibility_status = 'ineligible'
+                            result.auto_record_ineligible_reason = 'Auto-record globally disabled'
+                            result.save(update_fields=['auto_record_eligibility_status', 'auto_record_ineligible_reason'])
+                    except Exception as e:
+                        logger.warning(f"Manual eligibility evaluation failed for result {result.id}: {e}")
                 
                 # Transition job: LOCKED → DONE
                 job.mark_done()
@@ -429,7 +461,7 @@ class BotSubmitResultView(APIView):
                 error_msg = data.get('error_msg', 'Unknown error')
                 
                 # Persist result even on failure for debugging/traceability
-                failure_result, _ = CrawlResult.objects.update_or_create(
+                failure_result, created_fail = CrawlResult.objects.update_or_create(
                     job=job,
                     defaults={
                         'price': Decimal('0.00'),
@@ -443,8 +475,22 @@ class BotSubmitResultView(APIView):
                             'success': False,
                         },
                         'crawled_at': timezone.now(),
+                        # IMPORTANT: Reset recording status on failure too
+                        # So if we retry and succeed, result can be auto-recorded
+                        'history_record_status': 'none',
+                        'history_recorded': False,
+                        'history_recorded_at': None,
                     }
                 )
+                
+                # IMPORTANT: Mark as ineligible for failed results (updated case)
+                if not created_fail:
+                    try:
+                        failure_result.auto_record_eligibility_status = 'ineligible'
+                        failure_result.auto_record_ineligible_reason = 'Crawl failed: ' + error_msg[:150]
+                        failure_result.save(update_fields=['auto_record_eligibility_status', 'auto_record_ineligible_reason'])
+                    except Exception as e:
+                        logger.warning(f"Failed to update eligibility for failure result {failure_result.id}: {e}")
                 
                 # Check if retries available
                 if job.retry_count < job.max_retries - 1:

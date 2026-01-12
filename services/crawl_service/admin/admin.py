@@ -138,6 +138,28 @@ class AutoRecordQueueStatusFilter(admin.SimpleListFilter):
             return queryset
 
 
+class EligibilityStatusFilter(admin.SimpleListFilter):
+    """Filter by auto-record eligibility status"""
+    title = 'Eligibility Status'
+    parameter_name = 'eligibility_status'
+    
+    def lookups(self, request, model_admin):
+        return (
+            ('pending', '⏸️ Pending'),
+            ('eligible', '✓ Eligible'),
+            ('ineligible', '✗ Ineligible'),
+            ('queued', '⏳ Queued'),
+            ('processing', '⚙️ Processing'),
+            ('completed', '✅ Completed'),
+            ('failed', '❌ Failed'),
+        )
+    
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(auto_record_eligibility_status=self.value())
+        return queryset
+
+
 class CrawlResultInline(admin.TabularInline):
     """Inline results for job"""
     model = CrawlResult
@@ -517,6 +539,7 @@ class CrawlResultAdmin(admin.ModelAdmin):
         'price_display',
         'price_sources_badge',
         'stock_badge',
+        'eligibility_status_badge',
         'recording_status_badge',
         'queue_status_badge',
         'history_recorded_at',
@@ -525,6 +548,7 @@ class CrawlResultAdmin(admin.ModelAdmin):
     )
     
     list_filter = (
+        EligibilityStatusFilter,
         RecordingStatusFilter,
         JobStatusFilter,
         AutoRecordQueueStatusFilter,
@@ -545,6 +569,8 @@ class CrawlResultAdmin(admin.ModelAdmin):
         'created_at',
         'parsed_data_display',
         'raw_html',
+        'auto_record_eligibility_status',
+        'auto_record_ineligible_reason',
         'history_recorded',
         'history_record_status',
         'history_recorded_at',
@@ -564,6 +590,10 @@ class CrawlResultAdmin(admin.ModelAdmin):
         }),
         ('Crawl Details', {
             'fields': ('crawled_at',)
+        }),
+        ('Auto-Record Eligibility', {
+            'fields': ('auto_record_eligibility_status', 'auto_record_ineligible_reason'),
+            'description': 'Eligibility status: pending → evaluated → eligible/ineligible → queued → processing → completed/failed'
         }),
         ('Auto-Record Status', {
             'fields': ('auto_record_status_display', 'queue_status_display'),
@@ -720,6 +750,37 @@ class CrawlResultAdmin(admin.ModelAdmin):
         return f"{int(days)}d ago"
     crawled_ago.short_description = 'Crawled'
 
+    def eligibility_status_badge(self, obj):
+        """Display auto-record eligibility status"""
+        status = obj.auto_record_eligibility_status or 'pending'
+        color_map = {
+            'pending': ('⏸️ Pending', '#9E9E9E'),
+            'eligible': ('✓ Eligible', '#4CAF50'),
+            'ineligible': ('✗ Ineligible', '#F44336'),
+            'queued': ('⏳ Queued', '#2196F3'),
+            'processing': ('⚙️ Processing', '#FF9800'),
+            'completed': ('✅ Completed', '#4CAF50'),
+            'failed': ('❌ Failed', '#E91E63'),
+        }
+        label, color = color_map.get(status, ('—', '#CCCCCC'))
+        
+        # Add tooltip with reason if ineligible/failed
+        if obj.auto_record_ineligible_reason:
+            tooltip = obj.auto_record_ineligible_reason
+            return format_html(
+                '<span style="background:{};color:white;padding:2px 6px;border-radius:3px;" title="{}">{}</span>',
+                color,
+                tooltip,
+                label,
+            )
+        
+        return format_html(
+            '<span style="background:{};color:white;padding:2px 6px;border-radius:3px;">{}</span>',
+            color,
+            label,
+        )
+    eligibility_status_badge.short_description = 'Eligibility'
+    
     def recording_status_badge(self, obj):
         """Display recording status to shared PriceHistory"""
         status = obj.history_record_status or 'none'

@@ -91,25 +91,28 @@ def save_auto_record_config(data: Dict[str, Any]) -> None:
         logger.error(f"Failed to save auto record config: {e}", exc_info=True)
 
 
-def should_auto_record(result) -> bool:
+def should_auto_record(result) -> 'tuple[bool, str]':
     """Evaluate whether a CrawlResult meets auto-record conditions.
 
+    Returns:
+        tuple[bool, str]: (is_eligible, reason_if_ineligible)
+        
     Criteria sourced from parsed_data, stock, domain, and currency.
     """
     cfg = get_auto_record_config()
     if not cfg.get('enabled'):
-        return False
+        return False, 'Auto-record globally disabled'
 
     try:
         # Stock requirement
         if cfg.get('require_in_stock', True) and not bool(result.in_stock):
-            return False
+            return False, 'Product not in stock'
 
         # Currency whitelist check
         currency_whitelist = cfg.get('currency_whitelist') or []
         if currency_whitelist:  # Only check if whitelist is not empty
             if (result.currency or '').upper() not in {c.upper() for c in currency_whitelist}:
-                return False
+                return False, f'Currency "{result.currency}" not in whitelist'
 
         # Domain whitelist check
         domain_whitelist = cfg.get('allowed_domains') or []
@@ -122,7 +125,7 @@ def should_auto_record(result) -> bool:
                 domain_name = None
             
             if not domain_name or domain_name not in domain_whitelist:
-                return False
+                return False, f'Domain "{domain_name}" not in whitelist'
 
         # Parse and check price sources
         parsed_data = result.parsed_data or {}
@@ -131,7 +134,7 @@ def should_auto_record(result) -> bool:
         # If no sources in parsed_data, cannot auto-record
         if not price_sources:
             logger.debug(f"Result {result.id}: No price sources found in parsed_data")
-            return False
+            return False, 'No price sources found in parsed_data'
 
         # Check allowed sources
         allowed_sources = cfg.get('allowed_sources') or []
@@ -140,7 +143,7 @@ def should_auto_record(result) -> bool:
             source_intersection = set(price_sources) & set(allowed_sources)
             if not source_intersection:
                 logger.debug(f"Result {result.id}: No allowed sources found. Have: {price_sources}, Allowed: {allowed_sources}")
-                return False
+                return False, f'Sources {price_sources} not in allowed {allowed_sources}'
         
         # If no allowed sources configured, any source is acceptable
         # (as long as it exists, which we already checked above)
@@ -154,29 +157,29 @@ def should_auto_record(result) -> bool:
             
             if confidence < min_confidence:
                 logger.debug(f"Result {result.id}: ML confidence {confidence} < {min_confidence}")
-                return False
+                return False, f'ML confidence {confidence:.2f} < {min_confidence:.2f}'
 
         # Price must exist and be non-zero
         if result.price is None:
             logger.debug(f"Result {result.id}: Price is None")
-            return False
+            return False, 'Price is None'
         
         try:
             price_float = float(result.price)
             if price_float <= 0.0:
                 logger.debug(f"Result {result.id}: Price {price_float} is <= 0")
-                return False
+                return False, f'Price {price_float} <= 0'
         except (ValueError, TypeError) as e:
             logger.debug(f"Result {result.id}: Invalid price value: {e}")
-            return False
+            return False, f'Invalid price value: {str(e)}'
 
         # All checks passed
         logger.debug(f"Result {result.id}: ✓ Meets all auto-record criteria")
-        return True
+        return True, ''
         
     except Exception as e:
         logger.error(f"Auto-record evaluation error for result {getattr(result, 'id', '?')}: {e}", exc_info=True)
-        return False
+        return False, f'Evaluation error: {str(e)[:150]}'
 
 
 def write_price_history_for_result(result) -> bool:

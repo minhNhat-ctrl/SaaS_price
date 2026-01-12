@@ -523,6 +523,18 @@ class CrawlResult(models.Model):
         help_text="Timestamp when recording to PriceHistory was acknowledged"
     )
     
+    # Auto-record eligibility tracking
+    auto_record_eligibility_status = models.CharField(
+        max_length=30,
+        default='pending',
+        help_text="Auto-record eligibility: pending, eligible, ineligible, queued, processing, completed, failed"
+    )
+    auto_record_ineligible_reason = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Reason why result is ineligible for auto-record"
+    )
+    
     class Meta:
         db_table = 'crawl_result'
         verbose_name = 'Crawl Result'
@@ -531,6 +543,7 @@ class CrawlResult(models.Model):
             models.Index(fields=['job', '-created_at']),
             models.Index(fields=['-created_at']),
             models.Index(fields=['history_recorded', 'history_record_status']),
+            models.Index(fields=['auto_record_eligibility_status', '-created_at']),
         ]
         ordering = ['-created_at']
     
