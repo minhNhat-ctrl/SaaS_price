@@ -6,6 +6,7 @@ Models in PUBLIC schema: Domain, ProductURL, PriceHistory
 """
 from django.contrib import admin
 from django import forms
+from core.admin_core.infrastructure.custom_admin import default_admin_site
 from services.products_shared.infrastructure.django_models import (
     Domain,
     ProductURL,
@@ -45,7 +46,7 @@ class PriceHistoryInline(admin.TabularInline):
 
 
 
-@admin.register(Domain)
+@admin.register(Domain, site=default_admin_site)
 class DomainAdmin(admin.ModelAdmin):
     """Admin interface for Domain."""
     list_display = ['name', 'get_url_count', 'is_active', 'health_status', 'created_at']
@@ -59,7 +60,7 @@ class DomainAdmin(admin.ModelAdmin):
     get_url_count.short_description = 'URL Count'
 
 
-@admin.register(ProductURL)
+@admin.register(ProductURL, site=default_admin_site)
 class ProductURLAdmin(admin.ModelAdmin):
     """Admin interface for ProductURL."""
     list_display = ['get_domain_name', 'url_hash_short', 'reference_count', 'is_active', 'created_at']
@@ -129,16 +130,34 @@ class ProductURLAdmin(admin.ModelAdmin):
     url_hash_short.short_description = 'URL Hash'
 
 
-@admin.register(PriceHistory)
+@admin.register(PriceHistory, site=default_admin_site)
 class PriceHistoryAdmin(admin.ModelAdmin):
     """Admin interface for PriceHistory."""
-    list_display = ['url_hash_short', 'price', 'currency', 'is_available', 'source', 'scraped_at']
-    list_filter = ['currency', 'source', 'is_available']
-    search_fields = ['url_hash']
+    list_display = [
+        'get_domain_name',
+        'get_product_url',
+        'price',
+        'currency',
+        'is_available',
+        'source',
+        'scraped_at',
+    ]
+    list_filter = ['currency', 'source', 'is_available', 'product_url__domain']
+    search_fields = ['url_hash', 'product_url__raw_url', 'product_url__domain__name']
     readonly_fields = ['id', 'created_at']
     date_hierarchy = 'scraped_at'
+    list_select_related = ('product_url', 'product_url__domain')
+    raw_id_fields = ['product_url']
     
-    def url_hash_short(self, obj):
-        """Display shortened URL hash."""
-        return obj.url_hash[:16] + '...' if obj.url_hash else ''
-    url_hash_short.short_description = 'URL Hash'
+    def get_domain_name(self, obj):
+        """Display domain of the product URL."""
+        return obj.product_url.domain.name if obj.product_url and obj.product_url.domain else ''
+    get_domain_name.short_description = 'Domain'
+
+    def get_product_url(self, obj):
+        """Display a shortened product URL for quick inspection."""
+        if not obj.product_url:
+            return ''
+        raw = obj.product_url.raw_url or ''
+        return (raw[:80] + '...') if len(raw) > 80 else raw
+    get_product_url.short_description = 'Product URL'

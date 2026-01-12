@@ -32,6 +32,11 @@ urlpatterns = [
     # Admin Core - protected by fixed hash URL using CustomAdminSite
     # URL: /admin/{ADMIN_HASH}/
     path(f'admin/{ADMIN_HASH}/', default_admin_site.urls, name='admin_hash'),
+
+    # Shortcut alias for products_shared admin models (flat path)
+    # Example: /products_shared/pricehistory/
+    # Still uses the same CustomAdminSite (auth/permissions preserved)
+    path('products_shared/', default_admin_site.urls),
     
     # API endpoints for React SPA
     # Identity module - authentication
