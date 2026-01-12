@@ -10,7 +10,7 @@
   "_cron_config": {
     "_comment": "Cron configuration for auto-record scheduler",
     "scheduler_enabled": true,
-    "interval_seconds": 30,
+    "interval_seconds": 50,
     "batch_size": 101,
     "max_retries": 3,
     "retry_failed_every_n_cycles": 50,

@@ -90,6 +90,8 @@ class CustomAdminSite(admin.AdminSite):
             path('stats/', self.admin_view(self.stats_view), name='admin_stats'),
             # Crawl Service auto-record config
             path('crawl_service/auto-record-config/', self.admin_view(self.auto_record_config_view), name='admin_crawl_auto_record_config'),
+            # Crawl Service JobResetRule scheduler management (different path to avoid conflict)
+            path('crawl_service/jobresetrule-scheduler/', self.admin_view(self.job_reset_rule_scheduler_view), name='admin_crawl_job_reset_rule_scheduler'),
         ]
         
         return custom_urls + urls
@@ -330,6 +332,70 @@ class CustomAdminSite(admin.AdminSite):
         }
         
         return render(request, 'admin/crawl_auto_record_config.html', context)
+
+    def job_reset_rule_scheduler_view(self, request):
+        """
+        Render and manage JobResetRule scheduler.
+        
+        GET: Display current status and rules
+        POST: Control scheduler (start/stop)
+        """
+        from django.shortcuts import render
+        from django.contrib import messages
+        from services.crawl_service.models import JobResetRule
+        from services.crawl_service.infrastructure.job_reset_rule_scheduler import get_job_reset_rule_scheduler
+        
+        scheduler = get_job_reset_rule_scheduler()
+        
+        if request.method == 'POST':
+            action = request.POST.get('action')
+            
+            if action == 'start_scheduler':
+                success, msg = scheduler.start()
+                if success:
+                    messages.success(request, f'✓ {msg}')
+                else:
+                    messages.error(request, f'✗ {msg}')
+            
+            elif action == 'stop_scheduler':
+                success, msg = scheduler.stop()
+                if success:
+                    messages.success(request, f'✓ {msg}')
+                else:
+                    messages.error(request, f'✗ {msg}')
+            
+            elif action == 'run_now':
+                try:
+                    scheduler.run_resets()
+                    messages.success(request, '✓ JobResetRule resets executed')
+                except Exception as e:
+                    messages.error(request, f'✗ Error running resets: {str(e)}')
+        
+        # Get all rules
+        rules = JobResetRule.objects.all().order_by('-enabled', 'name')
+        
+        # Calculate next execution for each rule
+        for rule in rules:
+            rule_id = str(rule.id)
+            last_exec = scheduler.rule_last_execution.get(rule_id)
+            if last_exec:
+                from datetime import timedelta
+                next_exec = last_exec + timedelta(hours=rule.frequency_hours)
+                rule.next_execution = next_exec
+                rule.last_execution = last_exec
+            else:
+                rule.next_execution = None
+                rule.last_execution = None
+        
+        context = {
+            **self.each_context(request),
+            'title': 'JobResetRule Scheduler Management',
+            'scheduler_running': scheduler.is_running(),
+            'scheduler_stats': scheduler.stats,
+            'rules': rules,
+        }
+        
+        return render(request, 'admin/crawl_job_reset_rule_scheduler.html', context)
 
     @staticmethod
     def _get_client_ip(request) -> str:

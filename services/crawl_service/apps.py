@@ -16,7 +16,7 @@ class CrawlServiceConfig(AppConfig):
     def ready(self):
         """
         Import admin to register models and connect signals.
-        Auto-start scheduler if enabled in config.
+        Auto-start schedulers if enabled.
         """
         # Import admin to ensure models are registered
         from .admin import admin
@@ -24,7 +24,7 @@ class CrawlServiceConfig(AppConfig):
         # Import signals to connect receivers
         from . import signals
         
-        # Auto-start scheduler if enabled in config
+        # Auto-start auto-record scheduler if enabled in config
         try:
             from .infrastructure.auto_recording import get_auto_record_config
             from .infrastructure.scheduler_manager import get_scheduler_manager
@@ -39,6 +39,20 @@ class CrawlServiceConfig(AppConfig):
                     if success:
                         logger.info(f"✓ Auto-record scheduler started on app ready")
                     else:
-                        logger.warning(f"✗ Failed to start scheduler: {msg}")
+                        logger.warning(f"✗ Failed to start auto-record scheduler: {msg}")
         except Exception as e:
-            logger.error(f"Error during scheduler auto-start: {e}", exc_info=True)
+            logger.error(f"Error during auto-record scheduler auto-start: {e}", exc_info=True)
+        
+        # Auto-start JobResetRule scheduler
+        try:
+            from .infrastructure.job_reset_rule_scheduler import get_job_reset_rule_scheduler
+            
+            job_reset_scheduler = get_job_reset_rule_scheduler()
+            if not job_reset_scheduler.is_running():
+                success, msg = job_reset_scheduler.start()
+                if success:
+                    logger.info(f"✓ JobResetRule scheduler started on app ready")
+                else:
+                    logger.warning(f"✗ Failed to start JobResetRule scheduler: {msg}")
+        except Exception as e:
+            logger.error(f"Error during JobResetRule scheduler auto-start: {e}", exc_info=True)

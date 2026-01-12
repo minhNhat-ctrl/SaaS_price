@@ -1655,6 +1655,9 @@ class CrawlCacheConfigAdmin(admin.ModelAdmin):
     disable_cache.short_description = '🔴 Disable Cache'
 
 
+# Custom Admin for quick links
+# (Removed - using simpler approach via CrawlResultAdmin.get_urls())
+
 # Register models to CustomAdminSite (hash-protected)
 default_admin_site.register(CrawlJob, CrawlJobAdmin)
 default_admin_site.register(CrawlResult, CrawlResultAdmin)
