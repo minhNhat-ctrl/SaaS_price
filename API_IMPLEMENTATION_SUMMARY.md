@@ -364,16 +364,42 @@
 
 ---
 
-### 6. Products Shared Module API ✅ (Price History - New)
+### 6. Products Shared Module API ✅ (Price History & URLs - Shared Data)
 
-**Location:** `services/products_shared/api/views.py`
+**Location:** `services/products_shared/api/views.py` + `services/products_shared/api/urls.py`
 
-**Endpoints:**
+**CRITICAL DESIGN CLARIFICATION:**
 
-#### Price History Management
+⚠️ **Price is tied to ProductURL, NOT Product**
+- Each ProductURL has independent price history
+- A Product can have multiple URLs, each with different prices
+- **Therefore: Access prices via `url_hash`, NOT `product_id`**
 
-- `GET /api/products/<product_id>/prices/?url_hash=<hash>` - Get price history for URL
-  - Query params: `?url_hash=<url_hash>&limit=100` (required: url_hash)
+**Data Hierarchy:**
+```
+Tenant Product (tenant schema)
+    ↓ has many URLs
+ProductURLMapping (tenant schema) [links product_id ↔ url_hash]
+    ↓ references via url_hash
+ProductURL (public schema) [shared across all tenants]
+    ↓ has many prices
+PriceHistory (public schema) [append-only]
+```
+
+**Module Purpose:**
+- Manages shared (public schema) price history and URL catalog
+- Data is shared across all tenants via `url_hash` (string key, not FK)
+- Tenant isolation enforced at Products module level (via ProductURLMapping)
+- **No product_id in routes** - this is a shared module, not product-scoped
+
+**Endpoints (Shared Module - Public Schema):**
+
+#### Price History Management (URL-Scoped, NOT Product-Scoped)
+
+- `GET /api/price-history/?url_hash=<hash>&limit=100` - Get price history for specific URL
+  - **Required:** `url_hash` query parameter
+  - **NOT:** `/api/products/<id>/prices/` (wrong architecture)
+  - Query params: `?url_hash=<url_hash>&limit=100`
   - Response: 
   ```json
   {
@@ -402,7 +428,9 @@
   }
   ```
 
-- `POST /api/products/<product_id>/prices/` - Record new price for URL
+- `POST /api/price-history/` - Record new price for specific URL
+  - **Required:** `url_hash` in request body
+  - **NOT:** `/api/products/<id>/prices/` (wrong - price must specify URL)
   - Body: 
   ```json
   {
@@ -432,10 +460,15 @@
   }
   ```
 
-#### Product URL Management
+#### Product URL Management (Read-Only Shared Catalog - No Product ID)
 
-- `GET /api/products/<product_id>/urls/` - List all product URLs
-  - Query params: `?domain=example.com` (optional domain filter)
+These endpoints manage shared ProductURL catalog (public schema). **No `product_id` parameter** - this is shared across all tenants. To link a product to a URL, use Products module endpoints (ProductURLMapping).
+
+- `GET /api/product-urls/?domain=example.com` - List all product URLs in shared catalog
+  - **Purpose:** Browse all URLs in shared catalog (visible to all tenants)
+  - **Tenant Context:** NOT enforced (shared data)
+  - **Operations:** GET only (read-only)
+  - Query params: `?domain=example.com` (optional filter)
   - Response:
   ```json
   {
@@ -456,7 +489,10 @@
   }
   ```
 
-- `POST /api/products/<product_id>/urls/` - Add new product URL
+- `POST /api/product-urls/` - Register new URL in shared catalog
+  - **Purpose:** Register a URL for shared use (can be used by multiple products/tenants)
+  - **Tenant Context:** NOT enforced (creates public schema entry)
+  - **Note:** Tenant product→URL mapping done via Products module (ProductURLMapping endpoints)
   - Body:
   ```json
   {
@@ -482,29 +518,63 @@
   ```
 
 **Features:**
-- Price history tracking per product URL
-- Source tracking (CRAWLER, MANUAL, API, IMPORT)
-- Stock availability tracking
-- Currency support (USD, JPY, VND, etc.)
-- URL management with domain auto-extraction
-- Automatic deduplication of URLs
-- Append-only price history (no updates/deletes)
-- Time-series data ready for analytics
+- ✅ Price history tracking **per ProductURL** (not per product)
+- ✅ Source tracking (CRAWLER, MANUAL, API, IMPORT)
+- ✅ Stock availability tracking
+- ✅ Currency support (USD, JPY, VND, etc.)
+- ✅ URL management with domain auto-extraction
+- ✅ Automatic deduplication of URLs
+- ✅ Append-only price history (no updates/deletes/modify)
+- ✅ Time-series data ready for analytics
+- ✅ **Read-only URL endpoints** (no DELETE/PATCH operations)
+- ✅ Cross-tenant URL sharing via `url_hash` (string key)
+
+**Relationship to Products Module:**
+
+| Aspect | Products Module (Tenant) | Products Shared Module (Public) |
+|--------|--------------------------|--------------------------------|
+| **Scope** | Per-tenant (schema-isolated) | Shared (cross-tenant) |
+| **Models** | Product, ProductURLMapping | ProductURL, PriceHistory, Domain |
+| **API** | `/api/products/` | `/api/price-history/`, `/api/product-urls/` |
+| **Purpose** | Manage tenant products & their URLs | Manage shared catalog & prices |
+| **Product↔URL Link** | ProductURLMapping (tenant schema) | Via `url_hash` (string reference, not FK) |
+| **Price Access** | Via product ID + URL hash | Direct via URL hash only |
+
+**Important:** To get prices for a product, you must:
+1. Get product via `/api/products/<id>/`
+2. Get product's URLs via `/api/products/<id>/urls/` → extract `url_hash`
+3. Get prices via `/api/price-history/?url_hash=<hash>`
+
+**DO NOT:** Try to access prices directly from `/api/products/<id>/prices/` (wrong design - product has many URLs)
 
 **Data Model - PriceHistory (Public Schema):**
 ```json
 {
   "id": "uuid",
-  "product_url": "url_hash",
+  "product_url": "FK to ProductURL",
   "price": 99.99,
   "currency": "USD",
   "original_price": null,
   "is_available": true,
   "stock_status": "in_stock",
   "stock_quantity": 10,
-  "source": "CRAWLER",
+  "source": "CRAWLER|MANUAL|API|IMPORT",
   "scraped_at": "2026-01-10T03:28:09.988802+00:00",
   "created_at": "2026-01-10T03:28:09.988802+00:00"
+}
+```
+
+**Data Model - ProductURL (Public Schema):**
+```json
+{
+  "id": "uuid",
+  "url_hash": "sha256 (64 chars)",
+  "raw_url": "https://example.com/product",
+  "normalized_url": "https://example.com/product",
+  "domain": "FK to Domain",
+  "reference_count": 2,
+  "is_active": true,
+  "created_at": "2026-01-05T07:23:19Z"
 }
 ```
 

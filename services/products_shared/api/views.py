@@ -28,15 +28,18 @@ logger = logging.getLogger(__name__)
 
 class ProductPriceHistoryView(APIView):
     """
-    GET /api/products/{product_id}/prices/
-    POST /api/products/{product_id}/prices/
+    GET /api/price-history/?url_hash=<hash>&limit=100
+    POST /api/price-history/
     
-    Manage price history for a product URL.
+    Manage price history for a PRODUCT URL (not product).
+    Each URL has its own independent price history.
+    
+    product_id is NOT used - use url_hash to identify the URL.
     """
     permission_classes = [AllowAny]
     
-    def get(self, request, product_id):
-        """Get price history for product URL"""
+    def get(self, request):
+        """Get price history for a specific product URL"""
         try:
             url_hash = request.query_params.get('url_hash')
             
@@ -102,8 +105,8 @@ class ProductPriceHistoryView(APIView):
                 'detail': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def post(self, request, product_id):
-        """Record new price for product URL"""
+    def post(self, request):
+        """Record new price for a specific product URL"""
         try:
             data = request.data
             
@@ -180,16 +183,19 @@ class ProductPriceHistoryView(APIView):
 
 class ProductURLView(APIView):
     """
-    GET /api/products/{product_id}/urls/
-    POST /api/products/{product_id}/urls/
-    DELETE /api/products/{product_id}/urls/{url_hash}/
+    GET /api/product-urls/?domain=example.com
+    POST /api/product-urls/
     
-    Manage product URLs.
+    Read-only management of shared ProductURL catalog.
+    No product_id parameter (these are SHARED across all tenants).
+    
+    To link a product to a URL: use Products module endpoints.
+    To manage tenant product↔URL mapping: see ProductURLMapping endpoints.
     """
     permission_classes = [AllowAny]
     
-    def get(self, request, product_id):
-        """List all URLs for product"""
+    def get(self, request):
+        """List all product URLs in shared catalog"""
         try:
             # Get domain filter
             domain_name = request.query_params.get('domain')
@@ -228,8 +234,8 @@ class ProductURLView(APIView):
                 'detail': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def post(self, request, product_id):
-        """Add new URL"""
+    def post(self, request):
+        """Create/register new URL in shared catalog"""
         try:
             data = request.data
             
