@@ -161,3 +161,204 @@ class PriceHistoryAdmin(admin.ModelAdmin):
         raw = obj.product_url.raw_url or ''
         return (raw[:80] + '...') if len(raw) > 80 else raw
     get_product_url.short_description = 'Product URL'
+
+
+# Register custom admin view for ProductURL Price Dashboard
+def register_product_url_price_dashboard(admin_site):
+    """Register custom view for ProductURL with latest prices and history."""
+    from django.urls import path
+    from django.shortcuts import get_object_or_404
+    from django.http import JsonResponse
+    from django.views.decorators.http import require_http_methods
+    from django.db.models import Count, Q
+    
+    class ProductURLPriceDashboard:
+        """Dashboard view for ProductURL with price tracking and history."""
+        
+        def __init__(self, admin_site):
+            self.admin_site = admin_site
+        
+        def list_view(self, request):
+            """List all ProductURLs with latest price, price status, and trend."""
+            from django.template.response import TemplateResponse
+            
+            urls = ProductURL.objects.select_related('domain').prefetch_related('price_history').all()
+            
+            # Apply search from request
+            search_query = request.GET.get('q', '').strip()
+            
+            # Apply filters from request
+            domain_filter = request.GET.get('domain', '')
+            source_filter = request.GET.get('source', '')
+            availability_filter = request.GET.get('availability', '')
+            currency_filter = request.GET.get('currency', '')
+            
+            # Collect available filter values
+            domains = ProductURL.objects.values_list('domain__name', flat=True).distinct().order_by('domain__name')
+            sources = PriceHistory.objects.values_list('source', flat=True).distinct().order_by('source')
+            currencies = PriceHistory.objects.values_list('currency', flat=True).distinct().order_by('currency')
+            
+            # Enrich with price data and apply filters
+            urls_with_prices = []
+            for url_obj in urls:
+                latest = url_obj.price_history.order_by('-scraped_at').first()
+                if not latest:
+                    continue
+                
+                # Apply search filter
+                if search_query:
+                    if search_query.lower() not in url_obj.normalized_url.lower() and \
+                       search_query.lower() not in (url_obj.domain.name or '').lower():
+                        continue
+                
+                # Apply filters
+                if domain_filter and url_obj.domain.name != domain_filter:
+                    continue
+                if source_filter and latest.source != source_filter:
+                    continue
+                if availability_filter and str(latest.is_available) != availability_filter:
+                    continue
+                if currency_filter and latest.currency != currency_filter:
+                    continue
+                
+                previous = url_obj.price_history.order_by('-scraped_at')[1] if url_obj.price_history.count() > 1 else None
+                
+                # Determine price trend and change
+                change_amount = 0
+                trend = '➡️ No change'
+                
+                if previous and float(previous.price) != float(latest.price):
+                    change_amount = float(latest.price) - float(previous.price)
+                    if change_amount > 0:
+                        trend = '📈 Increase'
+                    else:
+                        trend = '📉 Decrease'
+                
+                urls_with_prices.append({
+                    'id': url_obj.id,
+                    'url_hash': url_obj.url_hash,
+                    'domain': url_obj.domain.name if url_obj.domain else 'N/A',
+                    'url': url_obj.normalized_url,
+                    'url_short': (url_obj.normalized_url[:80] + '...') if len(url_obj.normalized_url) > 80 else url_obj.normalized_url,
+                    'latest_price': float(latest.price),
+                    'latest_currency': latest.currency,
+                    'previous_price': float(previous.price) if previous else None,
+                    'trend': trend,
+                    'change_amount': change_amount,
+                    'updated_at': latest.scraped_at,
+                    'source': latest.source,
+                    'is_available': latest.is_available,
+                    'history_count': url_obj.price_history.count(),
+                })
+            
+            # Get admin site context
+            extra_context = self.admin_site.each_context(request)
+            
+            extra_context.update({
+                'title': 'Product URL Price Dashboard',
+                'has_filters': True,
+                'result_list': urls_with_prices,
+                'result_count': len(urls_with_prices),
+                'total_urls': len(urls_with_prices),
+                # Filter values for sidebar
+                'domains': [(d, d) for d in domains if d],
+                'sources': [(s, s) for s in sources if s],
+                'currencies': [(c, c) for c in currencies if c],
+                'availability_choices': [('True', 'In Stock'), ('False', 'Out of Stock')],
+                # Currently selected filters
+                'selected_domain': domain_filter,
+                'selected_source': source_filter,
+                'selected_availability': availability_filter,
+                'selected_currency': currency_filter,
+                # Search query
+                'search_query': search_query,
+            })
+            
+            return TemplateResponse(request, 'admin/products_shared_price_dashboard.html', extra_context)
+        
+        def detail_view(self, request, url_hash):
+            """Display detailed price history for a specific ProductURL."""
+            from django.template.response import TemplateResponse
+            from django.shortcuts import get_object_or_404
+            
+            url_obj = get_object_or_404(ProductURL, url_hash=url_hash)
+            
+            # Get all price histories
+            histories = list(url_obj.price_history.order_by('-scraped_at'))
+            
+            # Calculate statistics
+            price_stats = {
+                'total_records': len(histories),
+                'highest': max([float(h.price) for h in histories]) if histories else 0,
+                'lowest': min([float(h.price) for h in histories]) if histories else 0,
+                'avg': sum([float(h.price) for h in histories]) / len(histories) if histories else 0,
+            }
+            
+            # Enrich with trend data
+            histories_list = []
+            for i, history in enumerate(histories):
+                change_amount = None
+                change_indicator = None
+                
+                if i < len(histories) - 1:  # Not the last (oldest) record
+                    prev_history = histories[i + 1]
+                    if float(history.price) != float(prev_history.price):
+                        change_amount = float(history.price) - float(prev_history.price)
+                        if change_amount > 0:
+                            change_indicator = f'📈 +{change_amount:,.0f}'
+                        else:
+                            change_indicator = f'📉 {change_amount:,.0f}'
+                    else:
+                        change_amount = 0
+                        change_indicator = '➡️ 0'
+                else:
+                    # First time recording
+                    change_amount = None
+                    change_indicator = None
+                
+                histories_list.append({
+                    'recorded_at': history.scraped_at,
+                    'price': history.price,
+                    'currency': history.currency,
+                    'original_price': history.original_price,
+                    'is_available': history.is_available,
+                    'stock_status': history.stock_status,
+                    'stock_quantity': history.stock_quantity,
+                    'source': history.source,
+                    'change_amount': change_amount,
+                    'change_indicator': change_indicator,
+                })
+            
+            # Get latest price info
+            latest = histories[0] if histories else None
+            url_data = {
+                'domain': url_obj.domain.name if url_obj.domain else 'N/A',
+                'url': url_obj.normalized_url,
+                'url_hash': url_obj.url_hash,
+                'latest_price': float(latest.price) if latest else 0,
+                'latest_currency': latest.currency if latest else 'VND',
+                'updated_at': latest.scraped_at if latest else None,
+                'source': latest.source if latest else 'N/A',
+                'is_available': latest.is_available if latest else False,
+                'price_stats': price_stats,
+                'history': histories_list,
+            }
+            
+            # Get admin site context
+            extra_context = self.admin_site.each_context(request)
+            
+            extra_context.update({
+                'title': f'💰 Price History - {url_obj.normalized_url[:80]}',
+                'url_data': url_data,
+            })
+            
+            return TemplateResponse(request, 'admin/products_shared_price_history_detail.html', extra_context)
+    
+    # Create view instance
+    dashboard = ProductURLPriceDashboard(admin_site)
+    
+    # Return URL patterns for admin site
+    return [
+        path('products_shared/producturl/price-dashboard/', dashboard.list_view, name='products_shared_price_dashboard'),
+        path('products_shared/producturl/price-history/<str:url_hash>/', dashboard.detail_view, name='products_shared_price_history_detail'),
+    ]

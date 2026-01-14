@@ -94,6 +94,17 @@ class CustomAdminSite(admin.AdminSite):
             path('crawl_service/jobresetrule-scheduler/', self.admin_view(self.job_reset_rule_scheduler_view), name='admin_crawl_job_reset_rule_scheduler'),
         ]
         
+        # Add ProductURL Price Dashboard URLs (from products_shared module)
+        try:
+            from services.products_shared.infrastructure.django_admin import register_product_url_price_dashboard
+            product_urls = register_product_url_price_dashboard(self)
+            custom_urls.extend([
+                path(f'{url.pattern._route}/', self.admin_view(url.callback), name=url.name) 
+                for url in product_urls
+            ])
+        except Exception as e:
+            logger.warning(f"Could not register ProductURL Price Dashboard: {e}")
+        
         return custom_urls + urls
 
     def modules_view(self, request):

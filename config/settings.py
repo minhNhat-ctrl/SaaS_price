@@ -208,6 +208,7 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+# Note: STATICFILES_DIRS is empty - only collectstatic from apps (Django contrib admin, etc)
 
 # Media files
 MEDIA_URL = '/media/'

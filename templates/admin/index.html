@@ -115,6 +115,21 @@ Override django-tenants admin template to show SHARED_APPS models
                             {% endif %}
                         </tr>
                     {% endfor %}
+                    
+                    <!-- Add Price Dashboard link for products_shared app -->
+                    {% if app.app_label == 'products_shared' %}
+                    <tr class="price-dashboard-link" style="background-color: #e3f2fd; border-top: 2px solid #2196F3;">
+                        <th scope="row" style="padding: 12px 15px;">
+                            <a href="{% url 'admin:products_shared_price_dashboard' %}" style="color: #1976d2; font-weight: bold;">📊 Price Dashboard</a>
+                        </th>
+                        <td style="padding: 12px 15px;">
+                            <span style="color: #999; font-size: 11px;">Tracking</span>
+                        </td>
+                        <td style="padding: 12px 15px;">
+                            <a href="{% url 'admin:products_shared_price_dashboard' %}" class="viewlink" style="color: #1976d2; font-weight: bold;">View</a>
+                        </td>
+                    </tr>
+                    {% endif %}
                     </table>
                 </div>
             {% endif %}

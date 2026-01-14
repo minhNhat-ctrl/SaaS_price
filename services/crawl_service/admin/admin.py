@@ -612,17 +612,9 @@ class CrawlResultAdmin(admin.ModelAdmin):
     actions = ['write_price_to_shared_history']
 
     def get_queryset(self, request):
-        """Default filter: show only 'Not Recorded' and 'failed' status results"""
+        """Show all crawl results by default - user can filter as needed"""
         qs = super().get_queryset(request)
         qs = qs.select_related('job', 'job__product_url')
-        
-        # Check if user has explicitly filtered, if not apply defaults
-        if 'recording_status' not in request.GET:
-            # Default: show 'Not Recorded' (none) and 'failed' statuses
-            qs = qs.filter(
-                Q(history_record_status='none') | Q(history_record_status='failed')
-            )
-        
         return qs
     
     def job_url(self, obj):
