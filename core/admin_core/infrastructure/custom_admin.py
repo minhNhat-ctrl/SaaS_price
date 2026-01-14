@@ -211,6 +211,9 @@ class CustomAdminSite(admin.AdminSite):
         
         GET: Display current config in form
         POST: Save updated config OR control scheduler (start/stop)
+        
+        NOTE: Only processes POST if explicit action is provided from form submission.
+        Prevents unintended triggers on page refresh/reload.
         """
         from django.shortcuts import render, redirect
         from django.contrib import messages
@@ -222,7 +225,7 @@ class CustomAdminSite(admin.AdminSite):
         
         scheduler_manager = get_scheduler_manager()
         
-        if request.method == 'POST':
+        if request.method == 'POST' and request.POST.get('action'):
             action = request.POST.get('action')
             
             # Handle scheduler control actions
@@ -248,7 +251,7 @@ class CustomAdminSite(admin.AdminSite):
                 cfg = get_auto_record_config()
             
             # Handle config save
-            elif action == 'save_config' or action is None:
+            elif action == 'save_config':
                 # Parse form submission
                 enabled = request.POST.get('enabled') == 'on'
                 allowed_sources = [s.strip() for s in (request.POST.get('allowed_sources') or '').split(',') if s.strip()]
@@ -339,6 +342,9 @@ class CustomAdminSite(admin.AdminSite):
         
         GET: Display current status and rules
         POST: Control scheduler (start/stop)
+        
+        NOTE: Only processes POST if explicit action is provided from form submission.
+        Prevents unintended triggers on page refresh/reload.
         """
         from django.shortcuts import render
         from django.contrib import messages
@@ -347,7 +353,7 @@ class CustomAdminSite(admin.AdminSite):
         
         scheduler = get_job_reset_rule_scheduler()
         
-        if request.method == 'POST':
+        if request.method == 'POST' and request.POST.get('action'):
             action = request.POST.get('action')
             
             if action == 'start_scheduler':
