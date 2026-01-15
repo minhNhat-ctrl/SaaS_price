@@ -64,6 +64,7 @@ SHARED_APPS = [
     # Access Module MUST be in SHARED_APPS (memberships are global, not per-tenant)
     'core.access.apps.AccessConfig',
     'core.pricing.apps.PricingConfig',
+    'core.subscription.apps.SubscriptionConfig',
     # Products Shared Module (ProductURL, PriceHistory, Domain in public schema)
     'services.products_shared.apps.ProductsSharedConfig',
     # Crawl Service (Bot interaction module - not per-tenant)
