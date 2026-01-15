@@ -158,28 +158,43 @@ class PlanAdminForm(forms.ModelForm):
 
     def clean_limits(self):
         limits = self.cleaned_data.get("limits") or []
-        return [
-            {
-                "code": item["code"],
-                "description": item.get("description", ""),
-                "value": int(item.get("value", 0)),
-                "period": item.get("period"),
-            }
-            for item in limits
-        ]
+        normalized: List[dict] = []
+        for index, item in enumerate(limits):
+            if not isinstance(item, dict):
+                raise forms.ValidationError(f"Limit entry #{index + 1} must be an object")
+            # Accept both "code" and "key" for flexibility
+            code = (item.get("code") or item.get("key") or "").strip()
+            if not code:
+                raise forms.ValidationError(f"Limit entry #{index + 1} requires a 'code' or 'key' field")
+            # Accept both "description" and "name"
+            description = item.get("description") or item.get("name") or ""
+            normalized.append(
+                {
+                    "code": code,
+                    "description": description,
+                    "value": int(item.get("value", 0)),
+                    "period": item.get("period"),
+                }
+            )
+        return normalized
 
     def clean_pricing_rules(self):
         rules = self.cleaned_data.get("pricing_rules") or []
-        normalised = []
-        for item in rules:
-            normalised.append(
+        normalized: List[dict] = []
+        for index, item in enumerate(rules):
+            if not isinstance(item, dict):
+                raise forms.ValidationError(f"Pricing rule #{index + 1} must be an object")
+            name = (item.get("name") or "").strip()
+            if not name:
+                raise forms.ValidationError(f"Pricing rule #{index + 1} requires a name")
+            normalized.append(
                 {
-                    "name": item["name"],
+                    "name": name,
                     "rule_type": item.get("rule_type", ""),
                     "configuration": item.get("configuration", {}),
                 }
             )
-        return normalised
+        return normalized
 
 
 class PlanAdminAdapter(admin.ModelAdmin):
