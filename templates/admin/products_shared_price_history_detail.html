@@ -1,0 +1,204 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extrahead %}
+<style type="text/css">
+  #content-main {
+    margin: 0 15px;
+  }
+  .module {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin: 15px 0;
+    padding: 20px;
+  }
+  .module h2 {
+    margin: 0 0 20px;
+    padding: 0;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+    font-size: 20px;
+  }
+  .module table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .module table th {
+    text-align: left;
+    padding: 12px;
+    background: #f8f8f8;
+    border-bottom: 1px solid #ddd;
+    font-weight: bold;
+  }
+  .module table td {
+    padding: 12px;
+    border-bottom: 1px solid #eee;
+  }
+  .module table tbody tr:hover {
+    background: #f9f9f9;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>{{ title }}</h1>
+
+<div id="content-main">
+    <div class="module">
+        <h2>Product Details</h2>
+        <table>
+            <tbody>
+                <tr>
+                    <th>Domain</th>
+                    <td>{{ url_data.domain }}</td>
+                </tr>
+                <tr>
+                    <th>URL</th>
+                    <td style="word-break: break-all;">{{ url_data.url }}</td>
+                </tr>
+                <tr>
+                    <th>URL Hash</th>
+                    <td style="font-family: monospace; font-size: 11px;">{{ url_data.url_hash }}</td>
+                </tr>
+                <tr>
+                    <th>Latest Price</th>
+                    <td style="font-weight: bold; color: #417690;">
+                        {{ url_data.latest_price|floatformat:0|add:"0" }} {{ url_data.latest_currency }}
+                    </td>
+                </tr>
+                <tr>
+                    <th>Last Updated</th>
+                    <td>{{ url_data.updated_at|date:"Y-m-d H:i:s" }}</td>
+                </tr>
+                <tr>
+                    <th>Source</th>
+                    <td>{{ url_data.source }}</td>
+                </tr>
+                <tr>
+                    <th>Availability</th>
+                    <td>
+                        {% if url_data.is_available %}
+                            <span style="color: #2e7d32;">✓ In Stock</span>
+                        {% else %}
+                            <span style="color: #d84315;">✗ Out of Stock</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    {% if url_data.price_stats %}
+    <div class="module">
+        <h2>Price Statistics</h2>
+        <table>
+            <tbody>
+                <tr>
+                    <th>Total Records</th>
+                    <td>{{ url_data.price_stats.total_records }}</td>
+                </tr>
+                <tr>
+                    <th>Highest Price</th>
+                    <td style="color: #d84315; font-weight: bold;">{{ url_data.price_stats.highest|floatformat:0|add:"0" }}</td>
+                </tr>
+                <tr>
+                    <th>Lowest Price</th>
+                    <td style="color: #2e7d32; font-weight: bold;">{{ url_data.price_stats.lowest|floatformat:0|add:"0" }}</td>
+                </tr>
+                <tr>
+                    <th>Average Price</th>
+                    <td>{{ url_data.price_stats.avg|floatformat:0|add:"0" }}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if url_data.history %}
+    <div class="module">
+        <h2>Price History</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Date/Time</th>
+                    <th>Price</th>
+                    <th>Original Price</th>
+                    <th>Change</th>
+                    <th>Trend</th>
+                    <th>Source</th>
+                    <th>Status</th>
+                    <th>Stock Qty</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in url_data.history %}
+                    <tr>
+                        <td style="font-size: 11px; white-space: nowrap;">{{ record.recorded_at|date:"Y-m-d H:i" }}</td>
+                        <td style="text-align: right; font-weight: bold; color: #417690;">
+                            {{ record.price|floatformat:0|add:"0" }}
+                        </td>
+                        <td style="text-align: right; font-size: 11px; color: #999;">
+                            {% if record.original_price %}
+                                {{ record.original_price|floatformat:0|add:"0" }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td style="text-align: right;">
+                            {% if record.change_amount is not None %}
+                                {% if record.change_amount > 0 %}
+                                    <span style="color: #d84315;">+{{ record.change_amount|floatformat:0 }}</span>
+                                {% elif record.change_amount < 0 %}
+                                    <span style="color: #2e7d32;">{{ record.change_amount|floatformat:0 }}</span>
+                                {% else %}
+                                    <span style="color: #999;">0</span>
+                                {% endif %}
+                            {% else %}
+                                <span style="color: #999;">-</span>
+                            {% endif %}
+                        </td>
+                        <td style="text-align: center; font-size: 14px;">
+                            {% if record.change_amount is not None %}
+                                {% if record.change_amount > 0 %}
+                                    📈
+                                {% elif record.change_amount < 0 %}
+                                    📉
+                                {% else %}
+                                    ➡️
+                                {% endif %}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td style="font-size: 11px;">{{ record.source }}</td>
+                        <td style="font-size: 11px;">
+                            {% if record.is_available %}
+                                <span style="color: #2e7d32;">✓ In</span>
+                            {% else %}
+                                <span style="color: #d84315;">✗ Out</span>
+                            {% endif %}
+                        </td>
+                        <td style="text-align: center; font-size: 11px;">
+                            {% if record.stock_quantity %}
+                                {{ record.stock_quantity }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+        <p>No price history found for this URL.</p>
+    {% endif %}
+
+    <div style="margin-top: 20px; text-align: left;">
+        <a href="{% url 'admin:products_shared_price_dashboard' %}" class="button">← Back to Dashboard</a>
+    </div>
+</div>
+{% endblock %}

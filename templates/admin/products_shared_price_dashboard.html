@@ -1,0 +1,166 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static %}
+
+{% block title %}{{ title }} | {{ site_header }}{% endblock %}
+
+{% block extrastyle %}
+<link rel="stylesheet" href="{% static 'admin/css/changelists.css' %}">
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <div class="module{% if has_filters %} filtered{% endif %}" id="changelist">
+    
+    <div id="toolbar">
+      <form id="changelist-search" method="get">
+        <div>
+          <label for="searchbar"><img src="{% static 'admin/img/search.svg' %}" alt="Search"></label>
+          <input type="text" size="40" name="q" value="{{ search_query }}" id="searchbar" autofocus placeholder="Search by URL or Domain...">
+          <input type="submit" value="Search">
+        </div>
+      </form>
+    </div>
+
+    {% if has_filters %}
+    <div id="changelist-filter">
+      <h2>{% translate 'Filter' %}</h2>
+      
+      <h3>By Domain</h3>
+      <ul>
+        <li{% if not selected_domain %} class="selected"{% endif %}>
+          <a href="?">All</a>
+        </li>
+        {% for domain_val, domain_label in domains %}
+        <li{% if selected_domain == domain_val %} class="selected"{% endif %}>
+          <a href="?domain={{ domain_val }}">{{ domain_label }}</a>
+        </li>
+        {% endfor %}
+      </ul>
+      
+      <h3>By Source</h3>
+      <ul>
+        <li{% if not selected_source %} class="selected"{% endif %}>
+          <a href="?{% if selected_domain %}domain={{ selected_domain }}&{% endif %}">All</a>
+        </li>
+        {% for source_val, source_label in sources %}
+        <li{% if selected_source == source_val %} class="selected"{% endif %}>
+          <a href="?{% if selected_domain %}domain={{ selected_domain }}&{% endif %}source={{ source_val }}">{{ source_label }}</a>
+        </li>
+        {% endfor %}
+      </ul>
+      
+      <h3>By Currency</h3>
+      <ul>
+        <li{% if not selected_currency %} class="selected"{% endif %}>
+          <a href="?{% if selected_domain %}domain={{ selected_domain }}&{% endif %}{% if selected_source %}source={{ selected_source }}&{% endif %}">All</a>
+        </li>
+        {% for currency_val, currency_label in currencies %}
+        <li{% if selected_currency == currency_val %} class="selected"{% endif %}>
+          <a href="?{% if selected_domain %}domain={{ selected_domain }}&{% endif %}{% if selected_source %}source={{ selected_source }}&{% endif %}currency={{ currency_val }}">{{ currency_label }}</a>
+        </li>
+        {% endfor %}
+      </ul>
+      
+      <h3>By Status</h3>
+      <ul>
+        <li{% if not selected_availability %} class="selected"{% endif %}>
+          <a href="?{% if selected_domain %}domain={{ selected_domain }}&{% endif %}{% if selected_source %}source={{ selected_source }}&{% endif %}{% if selected_currency %}currency={{ selected_currency }}&{% endif %}">All</a>
+        </li>
+        {% for avail_val, avail_label in availability_choices %}
+        <li{% if selected_availability == avail_val %} class="selected"{% endif %}>
+          <a href="?{% if selected_domain %}domain={{ selected_domain }}&{% endif %}{% if selected_source %}source={{ selected_source }}&{% endif %}{% if selected_currency %}currency={{ selected_currency }}&{% endif %}availability={{ avail_val }}">{{ avail_label }}</a>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    <form id="changelist-form" method="post">
+      {% csrf_token %}
+      <div class="results">
+        <table id="result_list">
+          <thead>
+            <tr>
+              <th scope="col" class="column-domain">
+                <div class="text">Domain</div>
+              </th>
+              <th scope="col" class="column-url">
+                <div class="text">URL</div>
+              </th>
+              <th scope="col" class="column-price">
+                <div class="text">Latest Price</div>
+              </th>
+              <th scope="col" class="column-change">
+                <div class="text">Change</div>
+              </th>
+              <th scope="col" class="column-trend">
+                <div class="text">Trend</div>
+              </th>
+              <th scope="col" class="column-source">
+                <div class="text">Source</div>
+              </th>
+              <th scope="col" class="column-status">
+                <div class="text">Status</div>
+              </th>
+              <th scope="col" class="column-updated">
+                <div class="text">Updated</div>
+              </th>
+              <th scope="col" class="column-history">
+                <div class="text">History</div>
+              </th>
+              <th scope="col" class="column-action">
+                <div class="text">Action</div>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in result_list %}
+            <tr>
+              <td class="field-domain">{{ item.domain }}</td>
+              <td class="field-url" title="{{ item.url }}">{{ item.url_short }}</td>
+              <td class="field-price" style="text-align: right;">
+                <strong>{{ item.latest_price|floatformat:0|add:"0" }}</strong>
+                <span style="font-size: 11px; color: #999;">{{ item.latest_currency }}</span>
+              </td>
+              <td class="field-change" style="text-align: right;">
+                {% if item.change_amount > 0 %}
+                  <span style="color: #ba2121;">+{{ item.change_amount|floatformat:0 }}</span>
+                {% elif item.change_amount < 0 %}
+                  <span style="color: #0c4b33;">{{ item.change_amount|floatformat:0 }}</span>
+                {% else %}
+                  <span style="color: #999;">0</span>
+                {% endif %}
+              </td>
+              <td class="field-trend" style="text-align: center;">{{ item.trend }}</td>
+              <td class="field-source">{{ item.source }}</td>
+              <td class="field-status" style="text-align: center;">
+                {% if item.is_available %}
+                  <img src="{% static 'admin/img/icon-yes.svg' %}" alt="True" title="In Stock">
+                {% else %}
+                  <img src="{% static 'admin/img/icon-no.svg' %}" alt="False" title="Out of Stock">
+                {% endif %}
+              </td>
+              <td class="field-updated nowrap">{{ item.updated_at|date:"Y-m-d H:i" }}</td>
+              <td class="field-history" style="text-align: center;">{{ item.history_count }}</td>
+              <td class="field-action">
+                <a href="{% url 'admin:products_shared_price_history_detail' item.url_hash %}" class="viewsitelink">View</a>
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="10">No ProductURLs found.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </form>
+
+    <p class="paginator">
+      {{ total_urls }} ProductURL(s)
+    </p>
+
+  </div>
+</div>
+{% endblock %}
+
