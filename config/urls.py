@@ -59,6 +59,9 @@ urlpatterns = [
     
     # Crawl Service - bot-controlled web crawling
     path('api/crawl/', include('services.crawl_service.api.urls')),
+    
+    # Billing module - payment contracts and webhooks
+    path('api/billing/', include('core.billing.urls')),
 ]
 
 # Admin URL for reference (check via manage.py shell or logs)

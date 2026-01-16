@@ -1,37 +1,56 @@
+"""
+Domain exceptions for Billing module.
+
+Billing module handles contracts, payments, and events.
+Does NOT contain plan, product, feature, usage, or limit validation.
+"""
+
+
 class BillingError(Exception):
-    """Base exception for billing operations."""
+    """Base billing domain exception."""
     pass
 
 
-class InvoiceNotFoundError(BillingError):
-    """Raised when invoice cannot be found."""
-    def __init__(self, invoice_id):
-        self.invoice_id = invoice_id
-        super().__init__(f"Invoice not found: {invoice_id}")
+class BillingContractNotFoundError(BillingError):
+    """Billing contract not found."""
+    pass
 
 
-class PaymentNotFoundError(BillingError):
-    """Raised when payment cannot be found."""
-    def __init__(self, payment_id):
-        self.payment_id = payment_id
-        super().__init__(f"Payment not found: {payment_id}")
+class BillingPaymentNotFoundError(BillingError):
+    """Billing payment not found."""
+    pass
 
 
-class InvalidInvoiceStateError(BillingError):
-    """Raised when invoice state transition is invalid."""
-    def __init__(self, current_status, attempted_action):
-        self.current_status = current_status
-        self.attempted_action = attempted_action
-        super().__init__(f"Cannot {attempted_action} invoice in {current_status} state")
+class BillingEventNotFoundError(BillingError):
+    """Billing event not found."""
+    pass
+
+
+class BillingGatewayCustomerNotFoundError(BillingError):
+    """Billing gateway customer not found."""
+    pass
+
+
+class InvalidContractStateError(BillingError):
+    """Invalid contract state transition."""
+    pass
 
 
 class PaymentGatewayError(BillingError):
-    """Raised when payment gateway operation fails."""
-    def __init__(self, gateway, message):
-        self.gateway = gateway
-        super().__init__(f"{gateway} error: {message}")
+    """Payment gateway integration error."""
+    pass
 
 
-class InvoiceCalculationError(BillingError):
-    """Raised when invoice calculation fails."""
+class WebhookSignatureError(BillingError):
+    """Webhook signature validation failed."""
+    pass
+
+
+class DuplicateWebhookError(BillingError):
+    """Webhook already processed (idempotency check)."""
+    pass
+
+
+class BillingProviderConfigNotFoundError(BillingError):
+    """Billing provider config not found."""
     pass

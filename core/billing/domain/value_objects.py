@@ -1,24 +1,22 @@
 from enum import Enum
 
 
-class InvoiceStatus(str, Enum):
-    """Invoice lifecycle states."""
-    DRAFT = "draft"  # Being prepared
-    PENDING = "pending"  # Awaiting payment
-    PAID = "paid"  # Payment received
-    OVERDUE = "overdue"  # Past due date
-    CANCELLED = "cancelled"  # Void/cancelled
-    REFUNDED = "refunded"  # Payment refunded
+class BillingContractStatus(str, Enum):
+    """Contract lifecycle states."""
+    PENDING = "pending"        # Awaiting activation
+    ACTIVE = "active"          # Currently active
+    PAST_DUE = "past_due"      # Payment overdue
+    EXPIRED = "expired"        # Contract period ended
+    CANCELED = "canceled"      # Cancelled by user or admin
 
 
 class PaymentStatus(str, Enum):
     """Payment transaction states."""
-    PENDING = "pending"  # Awaiting gateway response
+    PENDING = "pending"        # Awaiting gateway response
     PROCESSING = "processing"  # Gateway processing
-    SUCCESS = "success"  # Payment confirmed
-    FAILED = "failed"  # Payment declined
-    CANCELLED = "cancelled"  # Cancelled by user
-    REFUNDED = "refunded"  # Refund issued
+    SUCCESS = "success"        # Payment confirmed
+    FAILED = "failed"          # Payment declined
+    REFUNDED = "refunded"      # Refund issued
 
 
 class PaymentGateway(str, Enum):
@@ -26,7 +24,30 @@ class PaymentGateway(str, Enum):
     STRIPE = "stripe"
     PAYOS = "payos"
     VNPAY = "vnpay"
-    MANUAL = "manual"  # Manual/offline payment
+    PAYPAL = "paypal"
+
+
+class BillingEventType(str, Enum):
+    """Normalized billing event types from webhooks."""
+    # Subscription lifecycle
+    SUBSCRIPTION_CREATED = "subscription.created"
+    SUBSCRIPTION_UPDATED = "subscription.updated"
+    SUBSCRIPTION_DELETED = "subscription.deleted"
+    
+    # Payment events
+    PAYMENT_INTENT_SUCCEEDED = "payment_intent.succeeded"
+    PAYMENT_INTENT_PAYMENT_FAILED = "payment_intent.payment_failed"
+    PAYMENT_INTENT_CANCELED = "payment_intent.canceled"
+    
+    # Charge events
+    CHARGE_SUCCEEDED = "charge.succeeded"
+    CHARGE_FAILED = "charge.failed"
+    CHARGE_REFUNDED = "charge.refunded"
+    
+    # Invoice events
+    INVOICE_PAID = "invoice.paid"
+    INVOICE_PAYMENT_FAILED = "invoice.payment_failed"
+    INVOICE_PAYMENT_ACTION_REQUIRED = "invoice.payment_action_required"
 
 
 class BillingCycle:

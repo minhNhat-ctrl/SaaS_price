@@ -14,7 +14,7 @@ class BillingConfig(AppConfig):
     def ready(self) -> None:
         logger.info("Initializing Billing module (invoice & payment processing)")
         try:
-            from core.billing.infrastructure import admin  # noqa: F401
+            from core.billing.infrastructure import django_admin  # noqa: F401
             logger.info("Billing admin models registered")
         except Exception as exc:  # pragma: no cover
             logger.exception("Failed to register billing admin: %s", exc)
