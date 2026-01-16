@@ -66,6 +66,7 @@ SHARED_APPS = [
     'core.pricing.apps.PricingConfig',
     'core.subscription.apps.SubscriptionConfig',
     'core.quota.apps.QuotaConfig',
+    'core.billing.apps.BillingConfig',
     # Products Shared Module (ProductURL, PriceHistory, Domain in public schema)
     'services.products_shared.apps.ProductsSharedConfig',
     # Crawl Service (Bot interaction module - not per-tenant)
