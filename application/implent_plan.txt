@@ -1,0 +1,6 @@
+tôi muốn xây dựng application là nơi quy định luật của dịch vụ saas
+    - Runtime flow
+    - application là nơi điều phối các module, 
+    - Quy định các quy luật cơ bản (ví dụ: khi đăng ký mặc định sẽ tạo 1 tenant mới, tương tác giữa plan-quote-billing service,)
+    - Mọi truy cập đều đi qua application
+    - API view các moudule sẽ ĐỔI LUỒNG – KHÔNG ĐỔI CHỖ, Trước: api/module/view → module.service | Sau: api/module/view → application.usecase → module.service

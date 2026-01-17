@@ -1,26 +1,59 @@
+```text
+saas_project/
+├── application/             # Lớp điều phối trung tâm (use case, orchestrator, adapter)
+│   ├── dto/
+│   ├── interfaces/
+│   ├── orchestrators/
+│   └── use_cases/
+├── config/                  # Django settings & entry URLs
+│   ├── asgi.py
+│   ├── settings.py
+│   ├── urls.py
+│   └── wsgi.py
+├── core/                    # Các module xương sống (identity, tenants, billing, ...)
+│   └── <module>/
+├── services/                # Domain phụ trợ / dịch vụ mở rộng
+│   └── <module>/
+├── interfaces/              # Adapter chia sẻ (nếu có)
+├── templates/               # Django templates dùng cho admin/backoffice
+├── staticfiles/             # Static assets build sẵn
+├── manage.py
+└── requirement.txt
+```
 
-# Django SaaS Architecture
+### 3.1 Application layer & runtime flow (điều phối trung tâm)
 
-## 1. Mục tiêu kiến trúc
+**Vai trò:**
+- **Cổng vào duy nhất** cho mọi workflow runtime. Mọi API view (DRF, GraphQL, CLI) phải gọi qua `application.interfaces` → `application.use_cases` thay vì đi thẳng vào module.
+- **Áp đặt luật nền tảng**: auto-provision tenant khi signup, đồng bộ subscription ↔ quota ↔ billing, trigger notification, ...
+- **Điều phối đa module** thông qua orchestrator (saga) để đảm bảo tuần tự, retry, bù trừ khi lỗi.
 
-- Thiết kế cho SaaS quy mô trung bình
-- Backend-first (không phụ thuộc UI)
-- Dễ mở rộng module (plug-in style)
-- Tách rõ nghiệp vụ – hạ tầng – framework
-- Phù hợp Django + các package SaaS hiện có
+**Thành phần chính:**
+- `application/use_cases/`: Use case mức nền tảng. Mỗi file định nghĩa một workflow (signup, payment_capture, ...).
+- `application/orchestrators/`: Tập hợp nhiều use case thành luồng dài (tenant onboarding, churn handling, ...).
+- `application/interfaces/`: Adapter theo kênh (HTTP, task, scheduler) chịu trách nhiệm validate input, map DTO và trả response chuẩn.
+- `application/dto/`: Định nghĩa payload/response chuẩn giữa interface ↔ use case (không trả domain entity ra ngoài).
 
-**Ứng dụng mẫu phục vụ use-case:**
-- Lưu product (URL, price, brand, category)
-- Theo dõi lịch sử giá theo thời gian
-- Giới hạn dịch vụ theo gói (quota URLs / products)
+**Nguyên tắc phụ thuộc:**
+- `application` chỉ **gọi xuống** service layer của từng module (core hoặc services). Không được truy cập trực tiếp ORM hoặc infrastructure của module.
+- Module **không** được import `application`. Dữ liệu/luồng chỉ chảy một chiều: API → Application → Module.
+- API layer chỉ biết tới application use case. Nếu use case chỉ chạm vào một module, logic module vẫn nằm trong module service, application đóng vai trò facade.
 
----
+**Luồng chuẩn mới:**
+```
+HTTP Request
+ ↓
+TenantMiddleware (resolve tenant)
+ ↓
+API view/adapter → Application Use Case
+ ↓
+Module Service → Module Repository → Domain → DB
+```
 
-## 2. Tư duy cốt lõi
+**Ví dụ workflow:**
+- Signup: Application use case lần lượt gọi Identity → Tenants → Subscription → Billing → Notification.
+- Payment Confirmed: Application orchestrator nhận webhook, gọi Billing → Subscription → Notification.
 
-### 2.1 SaaS = Multi-tenant
-
-- Tenant = 1 khách hàng / 1 công ty / 1 account trả phí
 - Mọi dữ liệu đều thuộc về tenant
 - User chỉ là người dùng bên trong tenant
 - ❗ Tenant KHÔNG phải User
@@ -31,25 +64,15 @@
 
 ```text
 saas_project/
-├── config/            # Django settings & URLs
-│   ├── settings/
-│   │   ├── base.py
-│   │   ├── dev.py
-│   │   └── prod.py
-│   └── urls.py
-├── core/          # Core SaaS platform (xương sống)
-│   ├── tenants/
-│   ├── subscriptions/
-│   ├── usage/
-│   └── billing/
-├── services/          # Business services (custom logic)
-│   └── catalog/
-├── shared/            # Shared utilities
-│   ├── domain/
-│   ├── services/
-│   └── infrastructure/
+├── application/       # Orchestrator (use_cases/orchestrators/interfaces/dto)
+├── config/            # Django settings & entry URLs
+├── core/              # Các module nền tảng (identity, tenants, billing, ...)
+├── services/          # Module nghiệp vụ mở rộng
+├── interfaces/        # Thư viện adapter chia sẻ (nếu có)
+├── templates/         # Template Django (admin/backoffice)
+├── staticfiles/       # Static assets build sẵn
 ├── manage.py
-└── requirements.txt
+└── requirement.txt
 ```
 
 ---
@@ -57,27 +80,37 @@ saas_project/
 ## 4. Quy ước cấu trúc một module (chuẩn)
 ```text
 module_name/
-├── domain/            # Khái niệm nghiệp vụ thuần túy
-│   ├── entity.py
+├── domain/              # Business thuần, không phụ thuộc framework
+│   ├── entities.py
+│   ├── value_objects.py
 │   └── exceptions.py
-├── services/          # Logic nghiệp vụ / use-case
-│   └── xxx_service.py
-├── repositories/      # Interface truy cập dữ liệu
-│   └── xxx_repo.py
-├── infrastructure/    # Django / ORM / HTTP
+├── repositories/
+│   ├── interfaces.py   # Interface trừu tượng
+│   └── implementations.py
+├── infrastructure/
 │   ├── django_models.py
-│   ├── api_views.py          # ← JSON endpoints (for React SPA)
-│   ├── urls.py               # ← API routes
-│   ├── django_admin.py       # ← Admin adapter
-│   └── middleware.py         # ← Optional
+│   ├── django_admin.py
+│   └── adapters.py      # Tích hợp external service (nếu có)
+├── services/
+│   └── use_cases.py     # Logic ứng dụng của module (không biết HTTP)
+├── api/
+│   ├── serializers.py
+│   ├── views.py         # Layer mỏng: validate → gọi application/module use case
+│   └── urls.py
+├── tests/
+│   ├── test_domain.py
+│   ├── test_services.py
+│   └── test_api.py
 ├── apps.py
 └── migrations/
 ```
 
-**❗ Lưu ý:** 
-- Module **KHÔNG có Django template** (dùng React SPA thay thế)
-- API view **chỉ trả JSON**, không render HTML
-- Nếu cần back-office, dùng Django Admin thông qua service layer
+**Nguyên tắc:**
+- Không để business logic trong `django_models.py` hay `views.py`; tất cả nằm ở `services/use_cases.py` hoặc domain.
+- `api/views.py` chỉ làm 3 việc: validate input (serializer) → gọi application use case (hoặc module use case nếu không cần điều phối) → map response theo chuẩn `{success, data}`.
+- `domain` tuyệt đối không import Django/DRF/requests.
+- `services` trả về domain entity hoặc DTO riêng, **không** trả thẳng ORM model.
+- `repositories/implementations.py` là nơi duy nhất truy cập ORM.
 
 
 ## 4.1 Chuẩn hoá URL & namespacing API theo module
@@ -131,24 +164,43 @@ urlpatterns = [
 
 ## 5. Nguyên tắc phụ thuộc (RẤT QUAN TRỌNG)
 
-- `domain`        ← không import gì
-- `repositories`  ← import domain
-- `services`      ← import domain + repositories
-- `infrastructure`← import services / repositories
+```
+domain
+    ↑
+repositories
+    ↑
+infrastructure
+    ↑
+services
+    ↑
+application
+    ↑
+api / interfaces
+```
+
+- `domain`        ← thuần business, **không import gì khác**.
+- `repositories`  ← import domain để định nghĩa interface và mapping entity.
+- `infrastructure`← hiện thực repository/adapters, có thể import domain + repository.
+- `services`      ← chứa use case của module, import domain + repository (implementation injected qua constructor).
+- `application`   ← import **chỉ** services/use_cases của module (không đụng ORM / infrastructure trực tiếp).
+- `api/interfaces`← import application use case (mặc định). Chỉ được gọi thẳng module service nếu workflow hoàn toàn nằm trong 1 module và được chấp thuận.
 
 **❌ Cấm:**
 - Domain import Django
 - Service import request / response
 - Service gọi trực tiếp ORM
+- Module import ngược lên `application`
 
 ---
 
 ## 6. Vai trò các tầng
 
-- **Domain:** Định nghĩa ngôn ngữ nghiệp vụ, Entity, Value Object, Exception, không biết DB, HTTP, Django
-- **Services:** Điều phối nghiệp vụ, thực hiện use-case, nhận input thuần (tenant, data)
-- **Repositories:** Cổng truy cập dữ liệu, che giấu DB implementation
-- **Infrastructure:** Django ORM, API Views, Middleware
+- **Domain:** Ngôn ngữ nghiệp vụ, Entity, Value Object, Exception, không biết DB/HTTP.
+- **Repositories:** Định nghĩa + hiện thực truy cập dữ liệu, mapping domain ↔ ORM.
+- **Infrastructure:** ORM model, adapter external service, admin; không để business ở đây.
+- **Services (module):** Use case nội bộ module. Nhận DTO/domain input, gọi repository, trả domain object hoặc DTO.
+- **Application:** Ghép nhiều module services thành workflow. Quản lý transaction, retry, event nội bộ.
+- **API/Interfaces:** Adapter (HTTP, CLI, task) validate payload, gọi application use case, format `{success, data}` response.
 
 ---
 
@@ -183,20 +235,27 @@ Service logic
 ```text
 analytics/
 ├── domain/
-├── services/
 ├── repositories/
 ├── infrastructure/
-    └── django_admin.py  # (khuyến nghị) đăng ký Django Admin
+├── services/
+├── api/
+├── tests/
 └── apps.py
 ```
 
 **Bước 3:** Nguyên tắc tích hợp
-- Module bắt buộc khai báo trong INSTALLED_APPS
-- Module tự đăng ký admin (nếu cần quản trị)
-- Core admin không chỉnh sửa khi thêm module mới
-- Service luôn nhận tenant
-- Không truy cập DB trực tiếp
-- Không phụ thuộc module khác (trừ qua service)
+- Khai báo module trong `INSTALLED_APPS` (SHARED_APPS hay TENANT_APPS tuỳ use case).
+- Tạo `infrastructure/django_admin.py` và import trong `apps.py.ready()` để Auto register admin.
+- Viết use case trong `services/use_cases.py`; expose function/class rõ ràng để application layer gọi được.
+- `api/views.py` của module chỉ chứa endpoint nội bộ nếu thật sự cần. Endpoint phục vụ frontend phải đi qua application.
+- Không import module khác trực tiếp. Giao tiếp qua application hoặc interface/DTO được định nghĩa chung.
+- Service luôn nhận `tenant`, `actor` và dữ liệu thuần (dict/value object). Không nhận request hoặc model thô.
+
+**Bước 4:** Kết nối với application
+- Tạo file tương ứng trong `application/use_cases/<module>/` hoặc `application/orchestrators/`.
+- Map module service vào application use case (dependency inject qua constructor hoặc provider).
+- Cập nhật adapter HTTP tại `application/interfaces` (hoặc refactor DRF view hiện có) để gọi use case mới.
+- Viết tài liệu ngắn mô tả luồng mới trong `application/README.md` (nếu ảnh hưởng cross-module).
 
 ---
 ## 8.1 Nguyên tắc mới: Module tự đăng ký Admin
@@ -235,15 +294,16 @@ Có **2 entry point** cho dữ liệu:
 
 ### A. API Endpoint (React Frontend chính)
 ```
-HTTP Request → api_views.py → Service → Repository → DB
+HTTP Request → module/api/views.py → application.use_case → module.service → repository → DB
 ```
 - Trả JSON
 - Dùng cho React SPA
 - Có thể dùng cho mobile app sau
+- ✅ Bắt buộc đi qua application.use_case nếu use-case chạm >1 module (plan ↔ quota ↔ billing, signup tạo tenant,...)
 
 ### B. Django Admin (Back-office & Testing)
 ```
-Django Admin UI → admin.py (adapter) → Service → Repository → DB
+Django Admin UI → infrastructure/django_admin.py → Service → Repository → DB
 ```
 - Trả HTML
 - Dùng cho admin quản lý
