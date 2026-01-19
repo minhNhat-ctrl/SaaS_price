@@ -21,10 +21,69 @@ class NotificationSenderModel(models.Model):
     sender_key = models.CharField(max_length=100, unique=True, help_text="Unique identifier for this sender")
     channel = models.CharField(max_length=20, choices=CHANNEL_CHOICES)
     provider = models.CharField(max_length=100, help_text="e.g., 'sendgrid', 'twilio', 'firebase'")
+
+    # Endpoint configuration
+    endpoint_host = models.CharField(
+        max_length=255,
+        default="",
+        blank=True,
+        help_text="Provider endpoint hostname or base URL"
+    )
+    endpoint_port = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Provider endpoint port (if applicable)"
+    )
     
     # Email-specific
     from_email = models.EmailField(null=True, blank=True, help_text="From address for email")
     from_name = models.CharField(max_length=255, null=True, blank=True, help_text="From name for email")
+    smtp_host = models.CharField(
+        max_length=255,
+        default="",
+        blank=True,
+        help_text="SMTP host for sending email"
+    )
+    smtp_port = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="SMTP port"
+    )
+    smtp_username = models.CharField(
+        max_length=255,
+        default="",
+        blank=True,
+        help_text="SMTP username"
+    )
+    smtp_password = models.CharField(
+        max_length=255,
+        default="",
+        blank=True,
+        help_text="SMTP password or app-specific token"
+    )
+    pop3_host = models.CharField(
+        max_length=255,
+        default="",
+        blank=True,
+        help_text="POP3/IMAP host for receiving email (optional)"
+    )
+    pop3_port = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="POP3/IMAP port"
+    )
+    pop3_username = models.CharField(
+        max_length=255,
+        default="",
+        blank=True,
+        help_text="POP3/IMAP username"
+    )
+    pop3_password = models.CharField(
+        max_length=255,
+        default="",
+        blank=True,
+        help_text="POP3/IMAP password"
+    )
     
     # Credentials (encrypted)
     credentials_json = models.JSONField(

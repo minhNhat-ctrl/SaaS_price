@@ -1,5 +1,12 @@
 """Django admin registration for notification models."""
-from django.contrib import admin
+import smtplib
+from email.message import EmailMessage
+from typing import Optional
+
+from django import forms
+from django.contrib import admin, messages
+from django.contrib.admin.helpers import ActionForm
+from django.utils import timezone
 from django.utils.html import format_html
 from core.admin_core.infrastructure.custom_admin import default_admin_site
 from .django_models import NotificationSenderModel, NotificationTemplateModel, NotificationLogModel
@@ -13,6 +20,7 @@ class NotificationSenderAdmin(admin.ModelAdmin):
     list_filter = ['channel', 'is_active', 'is_default', 'provider']
     search_fields = ['sender_key', 'from_email', 'provider']
     readonly_fields = ['id', 'created_at', 'updated_at']
+    actions = ['action_test_sender']
     
     fieldsets = (
         ('Identity', {
@@ -21,8 +29,16 @@ class NotificationSenderAdmin(admin.ModelAdmin):
         ('Channel Configuration', {
             'fields': ('channel', 'provider', 'is_active', 'is_default')
         }),
-        ('Email Settings', {
-            'fields': ('from_email', 'from_name'),
+        ('Endpoint', {
+            'fields': ('endpoint_host', 'endpoint_port'),
+            'classes': ('collapse',)
+        }),
+        ('Outgoing Email (SMTP)', {
+            'fields': ('from_email', 'from_name', 'smtp_host', 'smtp_port', 'smtp_username', 'smtp_password'),
+            'classes': ('collapse',)
+        }),
+        ('Incoming Email (POP3/IMAP)', {
+            'fields': ('pop3_host', 'pop3_port', 'pop3_username', 'pop3_password'),
             'classes': ('collapse',)
         }),
         ('Credentials', {
@@ -34,6 +50,23 @@ class NotificationSenderAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+    class TestSenderActionForm(ActionForm):
+        """Action form to capture manual test input."""
+
+        test_recipient = forms.CharField(
+            required=True,
+            label='Send test to',
+            help_text='Email address or endpoint to receive the test message.'
+        )
+        test_description = forms.CharField(
+            required=False,
+            label='Description',
+            widget=forms.Textarea(attrs={'rows': 2}),
+            help_text='Optional note included in the test message body.'
+        )
+
+    action_form = TestSenderActionForm
     
     def status_badge(self, obj):
         """Display active/inactive status."""
@@ -41,6 +74,118 @@ class NotificationSenderAdmin(admin.ModelAdmin):
         status = '✓ Active' if obj.is_active else '✗ Inactive'
         return format_html(f'<span style="color: {color}; font-weight: bold;">{status}</span>')
     status_badge.short_description = 'Status'
+
+    def action_test_sender(self, request, queryset):
+        """Send a manual test message using selected sender configurations."""
+
+        recipient = request.POST.get('test_recipient', '').strip()
+        description = request.POST.get('test_description', '').strip()
+
+        if not recipient:
+            self.message_user(request, 'Test recipient is required.', level=messages.ERROR)
+            return
+
+        for sender in queryset:
+            if sender.channel != 'EMAIL':
+                self.message_user(
+                    request,
+                    f"Sender '{sender.sender_key}' uses unsupported channel '{sender.channel}' for manual test.",
+                    level=messages.WARNING,
+                )
+                continue
+
+            try:
+                external_id = self._send_test_email(sender, recipient, description)
+            except Exception as exc:  # pragma: no cover - network dependent
+                self._record_test_log(sender, recipient, 'FAILED', str(exc), external_id=None)
+                self.message_user(
+                    request,
+                    f"Test send failed for '{sender.sender_key}': {exc}",
+                    level=messages.ERROR,
+                )
+                continue
+
+            self._record_test_log(sender, recipient, 'SENT', '', external_id=external_id)
+            self.message_user(
+                request,
+                f"Test message sent successfully via '{sender.sender_key}'.",
+                level=messages.SUCCESS,
+            )
+
+    action_test_sender.short_description = 'Send manual test message'
+
+    def _send_test_email(self, sender: NotificationSenderModel, recipient: str, description: str) -> str:
+        """Send a simple SMTP test email using sender configuration."""
+
+        host = sender.smtp_host or sender.endpoint_host
+        port = sender.smtp_port or sender.endpoint_port or 587
+
+        if not host:
+            raise ValueError('SMTP host or endpoint host must be configured for email channel.')
+
+        from_address = sender.from_email or sender.smtp_username
+        if not from_address:
+            raise ValueError('From email or SMTP username must be provided for test send.')
+
+        subject = description or f"Notification Sender Test ({sender.sender_key})"
+        body = (
+            f"This is a test message triggered from the admin panel.\n\n"
+            f"Sender: {sender.sender_key}\n"
+            f"Provider: {sender.provider}\n"
+            f"Timestamp: {timezone.now().isoformat()}"
+        )
+
+        message = EmailMessage()
+        message['Subject'] = subject
+        message['From'] = from_address
+        message['To'] = recipient
+        message.set_content(body)
+
+        if port == 465:
+            smtp_client = smtplib.SMTP_SSL(host=host, port=port, timeout=10)
+        else:
+            smtp_client = smtplib.SMTP(host=host, port=port, timeout=10)
+
+        with smtp_client as client:
+            client.ehlo()
+            if port not in (25, 465):
+                try:
+                    client.starttls()
+                    client.ehlo()
+                except smtplib.SMTPException:
+                    pass
+            if sender.smtp_username and sender.smtp_password:
+                client.login(sender.smtp_username, sender.smtp_password)
+            client.send_message(message)
+
+        import uuid
+        return str(uuid.uuid4())
+
+    def _record_test_log(
+        self,
+        sender: NotificationSenderModel,
+        recipient: str,
+        status: str,
+        error_message: str,
+        external_id: Optional[str],
+    ) -> None:
+        """Persist a log entry for manual test executions."""
+
+        NotificationLogModel.objects.create(
+            template_key='__admin_test__',
+            channel='EMAIL',
+            recipient=recipient,
+            status=status,
+            error_message=error_message,
+            external_id=external_id,
+            context_snapshot={
+                'sender_key': sender.sender_key,
+                'provider': sender.provider,
+                'admin_test': True,
+            },
+            sender_key=sender.sender_key,
+            sent_at=timezone.now() if status == 'SENT' else None,
+        )
 
 
 @admin.register(NotificationTemplateModel, site=default_admin_site)
