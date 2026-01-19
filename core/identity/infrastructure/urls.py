@@ -1,6 +1,6 @@
 """URL configuration for Identity module."""
 from django.urls import path
-from . import api_views
+from core.identity.api import views as api_views
 
 app_name = 'identity_api'
 

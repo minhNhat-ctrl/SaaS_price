@@ -3,7 +3,8 @@ from decimal import Decimal
 from core.pricing.domain.value_objects import BillingCycle, Money, PlanLimit, PricingRule
 from core.pricing.domain.entities import Plan
 from core.pricing.repositories.implementations import InMemoryPlanRepository
-from core.pricing.services.use_cases import PlanCatalogService, PlanDTO
+from core.pricing.services.use_cases import PlanCatalogService
+from core.pricing.dto import PlanSummary
 
 
 def test_service_returns_default_definitions_when_repository_empty():
@@ -14,7 +15,7 @@ def test_service_returns_default_definitions_when_repository_empty():
 
     assert isinstance(plans, list)
     assert plans  # defaults returned
-    assert all(isinstance(plan, PlanDTO) for plan in plans)
+    assert all(isinstance(plan, PlanSummary) for plan in plans)
 
 
 def test_service_uses_repository_data_when_available():

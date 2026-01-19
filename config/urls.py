@@ -39,29 +39,16 @@ urlpatterns = [
     path('products_shared/', default_admin_site.urls),
     
     # API endpoints for React SPA
-    # Identity module - authentication
-    path('api/identity/', include('core.identity.infrastructure.urls')),
+    # Application layer orchestration endpoints
+    # New structure: api/{domain}/{action}
+    # - /api/identity/signup/, /api/identity/signin/, /api/identity/recover-password/
+    # - /api/provisioning/create-tenant/
+    # - /api/business/create-product/
+    path('api/', include('application.api.urls')),
     
-    # Accounts module - profile management
-    path('api/accounts/', include('core.accounts.urls')),
-    
-    # Tenants module - project/tenant management
-    path('api/tenants/', include('core.tenants.urls')),
-    
-    # Access module - RBAC and membership
-    path('api/access/', include('core.access.urls')),
-    
-    # Products module - product management and price tracking
-    path('api/products/', include('services.products.api.urls')),
-    
-    # Products Shared module - shared product URLs and price history
-    path('api/', include('services.products_shared.api.urls')),
-    
-    # Crawl Service - bot-controlled web crawling
-    path('api/crawl/', include('services.crawl_service.api.urls')),
-    
-    # Billing module - payment contracts and webhooks
-    path('api/billing/', include('core.billing.urls')),
+    # Legacy provisioning endpoint (kept for backward compatibility)
+    # Will be deprecated once frontend migrates to /api/identity/signup/
+    path('api/provisioning/', include('application.interfaces.http.provisioning.urls')),
 ]
 
 # Admin URL for reference (check via manage.py shell or logs)

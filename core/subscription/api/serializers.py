@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from core.subscription.services.use_cases import SubscriptionDTO
+from core.subscription.dto import SubscriptionSummary
 
 
 class SubscriptionSerializer(serializers.Serializer):
@@ -16,14 +16,14 @@ class SubscriptionSerializer(serializers.Serializer):
     updated_at = serializers.CharField()
 
     @staticmethod
-    def from_dto(dto: SubscriptionDTO) -> dict:
+    def from_dto(dto: SubscriptionSummary) -> dict:
         return {
-            "id": dto.id,
-            "tenant_id": dto.tenant_id,
+            "id": str(dto.id),
+            "tenant_id": str(dto.tenant_id),
             "plan_code": dto.plan_code,
-            "status": dto.status,
-            "start_date": dto.start_date,
-            "end_date": dto.end_date,
-            "created_at": dto.created_at,
-            "updated_at": dto.updated_at,
+            "status": dto.status.value,
+            "start_date": dto.start_date.isoformat(),
+            "end_date": dto.end_date.isoformat(),
+            "created_at": dto.created_at.isoformat(),
+            "updated_at": dto.updated_at.isoformat(),
         }

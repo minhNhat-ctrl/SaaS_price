@@ -1,0 +1,203 @@
+1. FLOW CỐ ĐỊNH (KHÔNG CẤU HÌNH THỨ TỰ)
+
+
+        [Signup]
+        ↓
+        [Verify Email]
+        ↓
+        [Signin]
+        ↓
+        [Create Tenant(Project)]
+        ↓
+        [Resolve Subscription]
+        ↓
+        [Select Plan]
+        ↓
+        [Quote / Payment]
+        ↓
+        [Activate Tenant]
+    
+2. RULE CẤU HÌNH (BẬT/TẮT, CHỌN NHÁNH)
+    fule config chỉ được cấu hình qua admin django adapter, không đổi code flow
+
+    2.1 Signup
+    Flow: nhận user
+    Rule config:
+
+        allow_signup: true/false
+        domain_whitelist
+        captcha_required: true/false
+    ⛔ Không đổi logic tạo user
+
+    2.2 Verify Email
+    Flow: gửi email xác thực
+    Rule config:
+
+        require_email_verify: true/false
+        verify_expire_minutes: time_in_minutes
+        allow_signin_before_verify: true/false (rất hay dùng)
+    👉 SaaS lớn cho signin nhưng hạn quyền
+
+    2.3 Signin
+
+    Flow: cấp session/token
+        Rule config:
+            max_session
+            mfa_required (theo plan / tenant)
+            readonly_mode: true/false
+        
+    2.4 Create Tenant (Project)
+
+    Flow: tạo tenant
+        Rule config:
+            auto_create_tenant: true/false
+            max_tenant_per_user
+            default_tenant_status: pending | inactive
+
+    2.5 Resolve Subscription
+
+    Flow: xác định trạng thái subscription
+    Rule config:
+            allow_free_tier
+            allow_trial
+            trial_days
+            grace_period_days
+
+    👉 Đây là điểm quyết định có vào billing hay không
+    2.6 Select plan
+
+    flow: gán plan
+    rule config:
+            default plan
+            allow_plan_change: true/false
+            allowed_plans: (per region / tenant type)
+
+    Admin không tạo logic plan, chỉ chọn option
+
+    2.7 Quote / Payment
+
+    Flow: billing
+    Rule config:
+            billing_enabled
+            payment_required_for_activation
+            billing_mode: quote | direct_charge
+            allowed_providers
+
+    👉 Billing flow vẫn cố định
+
+    2.8 Activate Tenant
+
+    Flow: mở quyền sử dụng
+    Rule config:
+
+            activate_after_payment: true/false
+            activate_trial_immediately
+            activation_mode: full | limited
+    👉 Đây là điểm cuối, không quay ngược flow
+   
+Kết luận chuẩn kiến trúc
+
+Flow = code cố định (xương sống SaaS)
+Rule = config (bật/tắt, chọn nhánh)
+Admin chỉ chạm rule, không chạm flow
+
+
+3. Nhóm DTO cho AUTH (Signup / Verify / Signin)
+
+    3.1 SignupCommand
+        SignupCommand
+            - email
+            - password
+            - source (web, api)
+
+    3.2 SignupResult
+        SignupResult
+            - user_id
+            - verify_required (bool)
+
+    3.3 VerifyEmailCommand
+        VerifyEmailCommand
+            - user_id
+            - token
+    3.4 VerifyEmailResult
+        VerifyEmailResult
+        - verified (bool)
+
+    3.5 SigninCommand
+        SigninCommand
+            - user_id (or email)
+    3.6 SigninResult
+        SigninResult
+            - user_id
+            - session_id
+
+4. Nhóm DTO cho TENANT (Project)
+    4.1 CreateTenantCommand
+        CreateTenantCommand
+            - owner_user_id
+            - tenant_name
+
+    4.2 CreateTenantResult
+        CreateTenantResult
+            - tenant_id
+            - status (pending | inactive)
+
+5. Nhóm DTO cho SUBSCRIPTION / PLAN
+    5.1 ResolveSubscriptionCommand
+        ResolveSubscriptionCommand
+            - tenant_id
+
+    5.2 ResolveSubscriptionResult
+        ResolveSubscriptionResult
+            - status (free | trial | active)
+            - trial_days
+
+    5.3 AssignPlanCommand
+        AssignPlanCommand
+            - tenant_id
+            - plan_code
+
+    5.4 AssignPlanResult
+        AssignPlanResult
+            - plan_code
+            - requires_payment (bool)
+
+6. Nhóm DTO cho BILLING
+    6.1 CreateQuoteCommand
+        CreateQuoteCommand
+        - tenant_id
+        - plan_code
+
+    6.2 CreateQuoteResult
+        CreateQuoteResult
+            - quote_id
+            - amount
+            - currency
+    6.3 ChargePaymentCommand
+        ChargePaymentCommand
+            - quote_id
+            - payment_method
+
+    6.4 ChargePaymentResult
+        ChargePaymentResult
+            - success (bool)
+            - transaction_id
+
+7. Nhóm DTO cho ACTIVATE
+    7.1 ActivateTenantCommand
+        ActivateTenantCommand
+        - tenant_id
+
+    7.2 ActivateTenantResult
+        ActivateTenantResult
+            - status (active | limited)
+8. DTO “xuyên suốt flow” (Application-level)
+    ProvisioningContext (optional nhưng rất chuẩn)
+        ProvisioningContext
+            - user_id
+            - tenant_id
+            - plan_code
+            - subscription_status
+
+👉 Application flow giữ context này, không phải module.
+

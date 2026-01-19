@@ -4,6 +4,7 @@ from rest_framework.views import APIView
 
 from core.subscription.api.serializers import SubscriptionSerializer
 from core.subscription.domain.exceptions import SubscriptionNotFoundError
+from core.subscription.dto import ActiveSubscriptionQuery
 from core.subscription.services.use_cases import SubscriptionManagementService
 
 
@@ -24,7 +25,7 @@ class CurrentTenantSubscriptionAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            dto = self.service.get_active_subscription(tenant_id)
+            dto = self.service.get_active_subscription(ActiveSubscriptionQuery(tenant_id=tenant_id))
             data = SubscriptionSerializer.from_dto(dto)
             return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
         except SubscriptionNotFoundError:

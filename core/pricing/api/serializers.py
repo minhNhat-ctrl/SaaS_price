@@ -2,6 +2,8 @@
 
 from rest_framework import serializers
 
+from core.pricing.dto import PlanSummary
+
 
 class PlanSerializer(serializers.Serializer):
     code = serializers.CharField()
@@ -14,14 +16,14 @@ class PlanSerializer(serializers.Serializer):
     pricing_rules = serializers.JSONField()
 
     @staticmethod
-    def from_service(plan) -> dict:
+    def from_service(plan: PlanSummary) -> dict:
         return {
             "code": plan.code,
             "name": plan.name,
             "description": plan.description,
             "currency": plan.currency,
             "amount": plan.amount,
-            "billing_cycle": plan.billing_cycle,
-            "limits": plan.limits,
-            "pricing_rules": plan.pricing_rules,
+            "billing_cycle": plan.billing_cycle.value,
+            "limits": [limit.to_dict() for limit in plan.limits],
+            "pricing_rules": [rule.to_dict() for rule in plan.pricing_rules],
         }

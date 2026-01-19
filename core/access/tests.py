@@ -1,4 +1,4 @@
-"""Tests for Access module."""
-from django.test import TestCase
+"""Legacy module kept for compatibility.
 
-# Tests will be implemented following TDD approach
+Real tests live in core.access.tests package.
+"""

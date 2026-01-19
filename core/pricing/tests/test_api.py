@@ -1,18 +1,21 @@
 from decimal import Decimal
 
 from core.pricing.api.serializers import PlanSerializer
-from core.pricing.services.use_cases import PlanDTO
+from core.pricing.domain.value_objects import BillingCycle
+from core.pricing.dto import PlanLimitDTO, PlanSummary
 
 
 def test_plan_serializer_output():
-    dto = PlanDTO(
+    dto = PlanSummary(
         code="starter",
         name="Starter",
         description="",
         currency="USD",
         amount=Decimal("0"),
-        billing_cycle="monthly",
-        limits=[{"code": "tracked_products", "description": "", "value": 50, "period": "per_month"}],
+        billing_cycle=BillingCycle.MONTHLY,
+        limits=[
+            PlanLimitDTO(code="tracked_products", description="", value=50, period="per_month")
+        ],
         pricing_rules=[],
         is_active=True,
         metadata={},

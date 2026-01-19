@@ -1,4 +1,4 @@
-"""Tests for Accounts module."""
-from django.test import TestCase
+"""Legacy test module kept for backwards compatibility.
 
-# Tests will be implemented following TDD approach
+Actual tests live under core.accounts.tests package.
+"""

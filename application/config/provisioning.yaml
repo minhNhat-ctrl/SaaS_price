@@ -1,0 +1,59 @@
+# Provisioning Flow Configuration
+# Defines steps in tenant onboarding flow and their default states
+
+flow_code: provisioning
+flow_name: "Tenant Onboarding Flow"
+description: "Complete flow from signup to tenant activation"
+
+steps:
+  - code: signup
+    name: "User Signup"
+    description: "Register new user account"
+    enabled: true
+    required: true
+    
+  - code: verify_email
+    name: "Email Verification"
+    description: "Send and verify email confirmation"
+    enabled: true
+    required: false
+    
+  - code: signin
+    name: "User Signin"
+    description: "Establish user session"
+    enabled: true
+    required: false
+    
+  - code: create_tenant
+    name: "Create Tenant"
+    description: "Provision new tenant schema"
+    enabled: true
+    required: true
+    
+  - code: resolve_subscription
+    name: "Resolve Subscription"
+    description: "Initialize subscription terms"
+    enabled: true
+    required: false
+    
+  - code: assign_plan
+    name: "Assign Plan"
+    description: "Assign pricing plan to tenant"
+    enabled: true
+    required: true
+    
+  - code: quote_payment
+    name: "Quote Payment"
+    description: "Create quote and charge payment if required"
+    enabled: true
+    required: false
+    
+  - code: activate_tenant
+    name: "Activate Tenant"
+    description: "Finalize tenant activation"
+    enabled: true
+    required: true
+
+# Metadata
+created_at: "2026-01-19"
+version: "1.0.0"

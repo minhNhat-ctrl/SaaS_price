@@ -15,6 +15,7 @@ from ..repositories.interfaces import (
     NotificationTemplateRepository,
     NotificationLogRepository,
 )
+from ..dto import NotificationLogDTO, SendNotificationCommand
 
 
 class NotificationService:
@@ -118,6 +119,17 @@ class NotificationService:
             )
         
         return saved_log
+
+    def send_from_dto(self, command: SendNotificationCommand) -> NotificationLog:
+        """Send a notification using a DTO command payload."""
+
+        return self.send(command.to_domain())
+
+    @staticmethod
+    def to_log_dto(log: NotificationLog) -> NotificationLogDTO:
+        """Convert a NotificationLog domain entity into a DTO projection."""
+
+        return NotificationLogDTO.from_domain(log)
     
     def _send_via_provider(
         self,
@@ -165,4 +177,5 @@ class NotificationService:
     
     def get_send_log(self, template_key: str, limit: int = 50):
         """Get recent send logs for template."""
-        return self.template_repo.list_by_template_key(template_key, limit)
+
+        return self.log_repo.list_by_template_key(template_key, limit)

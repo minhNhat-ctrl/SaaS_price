@@ -1,0 +1,52 @@
+# Subscription Flow Configuration
+# Defines subscription lifecycle flow steps
+
+flow_code: subscription
+flow_name: "Subscription Lifecycle Flow"
+description: "Subscription management from trial to renewal/cancellation"
+
+steps:
+  - code: start_trial
+    name: "Start Trial"
+    description: "Initialize trial subscription"
+    enabled: true
+    required: false
+    
+  - code: convert_to_paid
+    name: "Convert to Paid"
+    description: "Upgrade trial to paid subscription"
+    enabled: true
+    required: true
+    
+  - code: renew_subscription
+    name: "Renew Subscription"
+    description: "Process subscription renewal"
+    enabled: true
+    required: true
+    
+  - code: upgrade_plan
+    name: "Upgrade Plan"
+    description: "Change to higher tier plan"
+    enabled: true
+    required: false
+    
+  - code: downgrade_plan
+    name: "Downgrade Plan"
+    description: "Change to lower tier plan"
+    enabled: true
+    required: false
+    
+  - code: cancel_subscription
+    name: "Cancel Subscription"
+    description: "Terminate subscription"
+    enabled: true
+    required: false
+    
+  - code: expire_subscription
+    name: "Expire Subscription"
+    description: "Mark subscription as expired"
+    enabled: true
+    required: true
+
+created_at: "2026-01-19"
+version: "1.0.0"
