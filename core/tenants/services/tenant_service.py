@@ -173,7 +173,8 @@ class TenantService:
         Use-case: Lấy danh sách tất cả tenant (ADMIN ONLY)
         
         ⚠️ WARNING: Chỉ dùng cho admin/superuser
-        User thường phải dùng list_tenants_by_user()
+        User thường phải dùng application layer orchestrator để list tenants by user
+        (ghép nối với access module để lấy memberships)
         
         Args:
             status: Lọc theo trạng thái (optional)
@@ -182,62 +183,20 @@ class TenantService:
             Danh sách Tenant
         """
         return await self.repository.list_all(status=status)
-
-    async def list_tenants_by_user(
-        self,
-        user_id: UUID,
-        status: Optional[TenantStatus] = None
-    ) -> List[Tenant]:
+    
+    async def get_tenants_by_ids(self, tenant_ids: List[UUID], status: Optional[TenantStatus] = None) -> List[Tenant]:
         """
-        Use-case: Lấy danh sách tenant mà user có quyền truy cập
+        Use-case: Lấy danh sách tenant theo list IDs
         
-        Quy trình:
-        1. Lấy tất cả memberships của user từ access module
-        2. Extract tenant_ids từ memberships
-        3. Load tenant entities từ repository
-        4. Filter theo status nếu có
+        Dùng bởi application layer để load tenants sau khi lấy tenant_ids từ memberships
         
         Args:
-            user_id: UUID của user
+            tenant_ids: Danh sách UUID của tenants
             status: Lọc theo trạng thái (optional)
         
         Returns:
-            Danh sách Tenant mà user có quyền
+            Danh sách Tenant
         """
-        # Import access service để lấy memberships
-        from core.access.services.access_service import AccessService
-        from core.access.infrastructure.django_repository import (
-            DjangoMembershipRepository,
-            DjangoRoleRepository,
-            DjangoPermissionRepository,
-            DjangoPolicyRepository,
-        )
-        
-        # Get user's memberships
-        access_service = AccessService(
-            membership_repo=DjangoMembershipRepository(),
-            role_repo=DjangoRoleRepository(),
-            permission_repo=DjangoPermissionRepository(),
-            policy_repo=DjangoPolicyRepository(),
-        )
-        
-        logger.info(f"[LIST_TENANTS_BY_USER] Fetching memberships for user_id: {user_id}")
-        memberships = await access_service.get_user_memberships(user_id)
-        logger.info(f"[LIST_TENANTS_BY_USER] Found {len(memberships)} memberships")
-        
-        for m in memberships:
-            logger.info(f"  - Membership ID: {m.id}, Tenant: {m.tenant_id}, Status: {m.status.value}")
-        
-        # Extract unique tenant IDs
-        tenant_ids = list(set(m.tenant_id for m in memberships))
-        
-        if not tenant_ids:
-            logger.warning(f"[LIST_TENANTS_BY_USER] User {user_id} has NO memberships!")
-            return []  # User has no memberships
-        
-        logger.info(f"[LIST_TENANTS_BY_USER] Loading {len(tenant_ids)} tenants...")
-        
-        # Load tenants by IDs
         tenants = []
         for tenant_id in tenant_ids:
             try:
@@ -246,7 +205,6 @@ class TenantService:
                     # Filter by status if specified
                     if status is None or tenant.status == status:
                         tenants.append(tenant)
-                        logger.info(f"  - Loaded tenant: {tenant.name} (ID: {tenant_id})")
             except Exception as e:
                 logger.warning(f"Failed to load tenant {tenant_id}: {e}")
                 continue
