@@ -27,6 +27,10 @@ class IdentityService:
     def __init__(self, repository: IdentityRepository):
         self.repository = repository
 
+    async def get_identity_by_email(self, email: str) -> Optional[UserIdentity]:
+        """Fetch identity by email (wrapper to avoid exposing repository to callers)."""
+        return await self.repository.get_by_email(email)
+
     async def register_user(self, email: str, password: str, email_verified: bool = False) -> UserIdentity:
         existing = await self.repository.get_by_email(email)
         if existing:

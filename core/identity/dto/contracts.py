@@ -4,54 +4,54 @@ from uuid import UUID
 from typing import Optional
 
 
-@dataclass(slots=True)
+@dataclass
 class RegisterIdentityCommand:
     email: str
     password: str
     email_verified: bool = False
 
 
-@dataclass(slots=True)
+@dataclass
 class RegisterIdentityResult:
     identity_id: UUID
     email: str
     email_verified: bool
 
 
-@dataclass(slots=True)
+@dataclass
 class AuthenticationCommand:
     email: str
     password: str
 
 
-@dataclass(slots=True)
+@dataclass
 class AuthenticationResult:
     user_id: UUID
     token: str
     expires_in: Optional[int] = None
 
 
-@dataclass(slots=True)
+@dataclass
 class PasswordResetRequestCommand:
     """Command to request password reset (initiate recovery flow)."""
     email: str
 
 
-@dataclass(slots=True)
+@dataclass
 class PasswordResetRequestResult:
     """Result of password reset request."""
     email: str
     reset_token: str
 
 
-@dataclass(slots=True)
+@dataclass
 class PasswordResetConfirmCommand:
     """Command to confirm password reset with token and new password."""
     token: str
     new_password: str
 
 
-@dataclass(slots=True)
+@dataclass
 class PasswordResetConfirmResult:
     """Result of password reset confirmation."""
     identity_id: UUID
@@ -59,13 +59,13 @@ class PasswordResetConfirmResult:
     password_reset: bool
 
 
-@dataclass(slots=True)
+@dataclass
 class VerifyEmailCommand:
     """Command to verify email using verification token."""
     token: str
 
 
-@dataclass(slots=True)
+@dataclass
 class VerifyEmailResult:
     """Result of email verification."""
     identity_id: UUID

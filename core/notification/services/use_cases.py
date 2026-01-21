@@ -10,7 +10,7 @@ from ..domain.exceptions import (
     NotificationSendError,
 )
 from ..domain.value_objects import SendCommand, SendStatus
-from ..repositories.interfaces import (
+from ..repositories import (
     NotificationSenderRepository,
     NotificationTemplateRepository,
     NotificationLogRepository,

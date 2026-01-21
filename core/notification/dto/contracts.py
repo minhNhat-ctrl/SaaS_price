@@ -10,7 +10,7 @@ from core.notification.domain.entities import NotificationLog, NotificationSende
 from core.notification.domain.value_objects import Channel, SendCommand, SendStatus
 
 
-@dataclass(slots=True)
+@dataclass
 class SendNotificationCommand:
     """Command payload issued by orchestrators when dispatching a notification."""
 
@@ -43,7 +43,7 @@ class SendNotificationCommand:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class NotificationLogDTO:
     """Snapshot of a notification send attempt."""
 
@@ -95,7 +95,7 @@ class NotificationLogDTO:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class NotificationSenderDTO:
     """Sender configuration summary for application use."""
 
@@ -131,7 +131,7 @@ class NotificationSenderDTO:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class NotificationTemplateDTO:
     """Template projection for orchestrators selecting content."""
 
@@ -176,7 +176,7 @@ class NotificationTemplateDTO:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class NotificationLogQuery:
     """Query parameters for listing notification logs."""
 
@@ -192,7 +192,7 @@ class NotificationLogQuery:
 # ============================================================
 
 
-@dataclass(slots=True)
+@dataclass
 class VerificationEmailCommand:
     """Command to send email verification link."""
     
@@ -218,7 +218,7 @@ class VerificationEmailCommand:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class PasswordResetEmailCommand:
     """Command to send password reset link."""
     
@@ -244,7 +244,7 @@ class PasswordResetEmailCommand:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class WelcomeEmailCommand:
     """Command to send welcome email to new user."""
     
@@ -268,7 +268,7 @@ class WelcomeEmailCommand:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class MagicLinkEmailCommand:
     """Command to send passwordless login link."""
     

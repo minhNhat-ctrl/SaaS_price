@@ -4,13 +4,13 @@ from typing import Optional, Dict, Any
 from uuid import UUID
 
 
-@dataclass(slots=True)
+@dataclass
 class ProfileRequestContext:
     user_id: UUID
     tenant_id: Optional[UUID] = None
 
 
-@dataclass(slots=True)
+@dataclass
 class UpdateProfileCommand:
     context: ProfileRequestContext
     display_name: Optional[str] = None
@@ -27,19 +27,19 @@ class UpdateProfileCommand:
     github: Optional[str] = None
 
 
-@dataclass(slots=True)
+@dataclass
 class UpdatePreferencesCommand:
     context: ProfileRequestContext
     preferences: Dict[str, Any]
 
 
-@dataclass(slots=True)
+@dataclass
 class UpdateNotificationSettingsCommand:
     context: ProfileRequestContext
     channels: Dict[str, Any]
 
 
-@dataclass(slots=True)
+@dataclass
 class UploadAvatarCommand:
     context: ProfileRequestContext
     file_name: str

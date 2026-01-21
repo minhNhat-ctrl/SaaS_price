@@ -10,7 +10,7 @@ from core.subscription.domain.entities import Subscription
 from core.subscription.domain.value_objects import SubscriptionStatus
 
 
-@dataclass(slots=True)
+@dataclass
 class SubscriptionProvisionCommand:
     """Command payload for provisioning or renewing a subscription."""
 
@@ -21,7 +21,7 @@ class SubscriptionProvisionCommand:
     initial_status: SubscriptionStatus = SubscriptionStatus.TRIAL
 
 
-@dataclass(slots=True)
+@dataclass
 class SubscriptionListQuery:
     """Query payload for retrieving tenant subscriptions."""
 
@@ -29,21 +29,21 @@ class SubscriptionListQuery:
     status: Optional[SubscriptionStatus] = None
 
 
-@dataclass(slots=True)
+@dataclass
 class ActiveSubscriptionQuery:
     """Query payload for requesting the active subscription of a tenant."""
 
     tenant_id: UUID
 
 
-@dataclass(slots=True)
+@dataclass
 class SubscriptionLifecycleCommand:
     """Command for status transitions on an existing subscription."""
 
     subscription_id: UUID
 
 
-@dataclass(slots=True)
+@dataclass
 class SubscriptionSummary:
     """DTO returned to the application/HTTP layer with subscription attributes."""
 

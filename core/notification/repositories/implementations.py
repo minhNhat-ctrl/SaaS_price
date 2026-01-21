@@ -4,7 +4,7 @@ from uuid import UUID
 
 from ..domain.entities import NotificationSender, NotificationTemplate, NotificationLog
 from ..domain.value_objects import Channel
-from .interfaces import (
+from . import (
     NotificationSenderRepository,
     NotificationTemplateRepository,
     NotificationLogRepository,

@@ -5,7 +5,7 @@ from typing import List, Optional
 from uuid import UUID
 
 
-@dataclass(slots=True)
+@dataclass
 class MembershipInvitationCommand:
     tenant_id: UUID
     invitee_email: str
@@ -14,14 +14,14 @@ class MembershipInvitationCommand:
     expires_at: Optional[datetime] = None
 
 
-@dataclass(slots=True)
+@dataclass
 class MembershipActivationCommand:
     tenant_id: UUID
     membership_id: UUID
     activated_by: UUID
 
 
-@dataclass(slots=True)
+@dataclass
 class MembershipRevokeCommand:
     tenant_id: UUID
     membership_id: UUID
@@ -29,7 +29,7 @@ class MembershipRevokeCommand:
     reason: Optional[str] = None
 
 
-@dataclass(slots=True)
+@dataclass
 class PermissionCheckQuery:
     tenant_id: UUID
     user_id: UUID

@@ -5,7 +5,7 @@ from typing import List, Optional
 from uuid import UUID
 
 
-@dataclass(slots=True)
+@dataclass
 class InviteMemberRequestDTO:
     tenant_id: UUID
     email: str
@@ -13,7 +13,7 @@ class InviteMemberRequestDTO:
     expires_at: Optional[str] = None
 
 
-@dataclass(slots=True)
+@dataclass
 class UpdateMembershipStatusDTO:
     tenant_id: UUID
     membership_id: UUID

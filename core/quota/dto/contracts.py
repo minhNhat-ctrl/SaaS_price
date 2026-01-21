@@ -10,7 +10,7 @@ from core.quota.domain.entities import QuotaLimit, UsageRecord
 from core.quota.domain.value_objects import LimitEnforcement
 
 
-@dataclass(slots=True)
+@dataclass
 class UsagePeriodDTO:
     """Represents the billing window for quota tracking."""
 
@@ -18,7 +18,7 @@ class UsagePeriodDTO:
     end: datetime
 
 
-@dataclass(slots=True)
+@dataclass
 class QuotaLimitDTO:
     """Quota limit descriptor provided by the Pricing module."""
 
@@ -45,7 +45,7 @@ class QuotaLimitDTO:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class UsageRecordCommand:
     """Command payload instructing the service to record usage."""
 
@@ -63,7 +63,7 @@ class UsageRecordCommand:
             raise ValueError("amount must be positive")
 
 
-@dataclass(slots=True)
+@dataclass
 class UsageSnapshotQuery:
     """Query payload requesting usage metrics for a tenant in a period."""
 
@@ -73,7 +73,7 @@ class UsageSnapshotQuery:
     limits: List[QuotaLimitDTO] = field(default_factory=list)
 
 
-@dataclass(slots=True)
+@dataclass
 class QuotaCheckQuery:
     """Dry-run command to check quota allowance before consuming."""
 
@@ -107,7 +107,7 @@ def _status_label(current_usage: int, limit: Optional[QuotaLimit]) -> str:
     return "within_limit"
 
 
-@dataclass(slots=True)
+@dataclass
 class UsageStatusDTO:
     """Snapshot of a metric's usage relative to its limit."""
 
@@ -176,7 +176,7 @@ class UsageStatusDTO:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class QuotaCheckResult:
     """Result DTO describing whether a usage request is allowed."""
 
@@ -202,7 +202,7 @@ class QuotaCheckResult:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class UsageSnapshotDTO:
     """Aggregate snapshot across metrics for a tenant."""
 

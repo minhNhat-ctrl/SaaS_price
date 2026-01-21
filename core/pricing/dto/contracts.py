@@ -9,7 +9,7 @@ from core.pricing.domain.entities import Plan
 from core.pricing.domain.value_objects import BillingCycle, PlanLimit, PricingRule
 
 
-@dataclass(slots=True)
+@dataclass
 class PlanLimitDTO:
     code: str
     description: str
@@ -34,7 +34,7 @@ class PlanLimitDTO:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class PlanPricingRuleDTO:
     name: str
     rule_type: str
@@ -56,7 +56,7 @@ class PlanPricingRuleDTO:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class PlanSummary:
     code: str
     name: str
@@ -85,19 +85,19 @@ class PlanSummary:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class PlanCatalogQuery:
     include_inactive: bool = False
     fallback_to_defaults: bool = True
 
 
-@dataclass(slots=True)
+@dataclass
 class PlanLookupQuery:
     plan_code: str
     allow_default_fallback: bool = True
 
 
-@dataclass(slots=True)
+@dataclass
 class PlanCatalogBootstrapCommand:
     include_codes: Optional[List[str]] = None
 

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 
-@dataclass(slots=True)
+@dataclass
 class UpdateProfileRequestDTO:
     display_name: Optional[str] = None
     first_name: Optional[str] = None
@@ -20,7 +20,7 @@ class UpdateProfileRequestDTO:
     github: Optional[str] = None
 
 
-@dataclass(slots=True)
+@dataclass
 class UpdatePreferencesRequestDTO:
     theme: Optional[str] = None
     language: Optional[str] = None

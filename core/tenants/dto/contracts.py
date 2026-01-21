@@ -8,7 +8,7 @@ from uuid import UUID
 from core.tenants.domain import TenantStatus
 
 
-@dataclass(slots=True)
+@dataclass
 class TenantProvisionCommand:
     """Command payload for provisioning a new tenant instance."""
 
@@ -19,7 +19,7 @@ class TenantProvisionCommand:
     auto_assign_admin: bool = True
 
 
-@dataclass(slots=True)
+@dataclass
 class TenantUpdateCommand:
     """Command payload for updating tenant profile attributes."""
 
@@ -28,7 +28,7 @@ class TenantUpdateCommand:
     name: Optional[str] = None
 
 
-@dataclass(slots=True)
+@dataclass
 class TenantStatusChangeCommand:
     """Command to transition tenant lifecycle state."""
 
@@ -37,7 +37,7 @@ class TenantStatusChangeCommand:
     target_status: TenantStatus
 
 
-@dataclass(slots=True)
+@dataclass
 class TenantAddDomainCommand:
     """Command for attaching an additional domain to a tenant."""
 
@@ -47,7 +47,7 @@ class TenantAddDomainCommand:
     is_primary: bool = False
 
 
-@dataclass(slots=True)
+@dataclass
 class TenantListQuery:
     """Query payload for listing tenants accessible by an actor."""
 
@@ -55,7 +55,7 @@ class TenantListQuery:
     status: Optional[TenantStatus] = None
 
 
-@dataclass(slots=True)
+@dataclass
 class TenantSummary:
     """Representation of tenant data returned to application layer."""
 
