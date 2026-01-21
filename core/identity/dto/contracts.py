@@ -29,3 +29,45 @@ class AuthenticationResult:
     user_id: UUID
     token: str
     expires_in: Optional[int] = None
+
+
+@dataclass(slots=True)
+class PasswordResetRequestCommand:
+    """Command to request password reset (initiate recovery flow)."""
+    email: str
+
+
+@dataclass(slots=True)
+class PasswordResetRequestResult:
+    """Result of password reset request."""
+    email: str
+    reset_token: str
+
+
+@dataclass(slots=True)
+class PasswordResetConfirmCommand:
+    """Command to confirm password reset with token and new password."""
+    token: str
+    new_password: str
+
+
+@dataclass(slots=True)
+class PasswordResetConfirmResult:
+    """Result of password reset confirmation."""
+    identity_id: UUID
+    email: str
+    password_reset: bool
+
+
+@dataclass(slots=True)
+class VerifyEmailCommand:
+    """Command to verify email using verification token."""
+    token: str
+
+
+@dataclass(slots=True)
+class VerifyEmailResult:
+    """Result of email verification."""
+    identity_id: UUID
+    email: str
+    email_verified: bool

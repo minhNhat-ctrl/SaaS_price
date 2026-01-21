@@ -174,11 +174,12 @@ class SignupFlow:
         context.user_id = user.id
         context.email = user.email
         
-        # Step 3: Send verification email
+        # Step 3: Send verification email (optional - skip if handler not provided)
         email_service = get_email_service()
-        token = email_service.send_verification_email(user.email)
-        context.verification_token = token
-        context.requires_verification = True
+        if email_service:
+            token = email_service.send_verification_email(user.email)
+            context.verification_token = token
+            context.requires_verification = True
         
         return context
 ```
@@ -189,11 +190,11 @@ class SignupFlow:
 - Context lưu state xuyên suốt các bước
 - Handler được inject qua constructor (dependency injection) hoặc lazy load từ provider
 - KHÔNG truy cập database/ORM trực tiếp, chỉ gọi service
+- Steps can be skipped by checking if handler is None or not provided
 
 **Khi nào tạo Flow:**
 - Use case cần nhiều hơn 2 module service
 - Cần quản lý state/context phức tạp
-- Cần rollback/compensation khi lỗi
 - Background job cần chạy nhiều bước
 
 ---
@@ -303,7 +304,7 @@ class SignupHandlerProtocol(Protocol):
 
 ### 📁 `application/config/`
 
-**Vai trò:** Cấu hình flow (YAML), toggle enable/disable bước, timeout, retry policy.
+**Vai trò:** Cấu hình flow (YAML), metadata cho flow documentation.
 
 **Cấu trúc:**
 ```
@@ -321,25 +322,24 @@ description: "Tenant onboarding flow"
 
 steps:
   - code: "signup"
-    enabled: true
-    timeout_seconds: 30
-    retry_policy:
-      max_retries: 3
-      backoff: "exponential"
+    description: "Register new user account"
+    required: true
   
   - code: "create_tenant"
-    enabled: true
-    timeout_seconds: 60
-    
+    description: "Provision new tenant schema"
+    required: true
+  
   - code: "select_plan"
-    enabled: true
-    
+    description: "Assign pricing plan"
+    required: true
+  
   - code: "create_billing"
-    enabled: false  # Skip billing for MVP
-    
+    description: "Setup billing"
+    required: false
+  
   - code: "send_welcome_email"
-    enabled: true
-    timeout_seconds: 15
+    description: "Send welcome email"
+    required: false
 
 metadata:
   owner: "platform-team"
@@ -347,10 +347,10 @@ metadata:
 ```
 
 **Quy tắc:**
-- YAML cho dễ đọc và chỉnh sửa
+- YAML cho dễ đọc và documentation
 - Mỗi flow một file
-- Flow orchestrator đọc config lúc runtime
-- Admin có thể toggle enable/disable bước mà không cần deploy code
+- Dùng cho documentation, không affect runtime behavior
+- Steps có thể bỏ qua bằng cách không implement handler
 
 ---
 
@@ -480,8 +480,10 @@ class CreateProductFlow:
         # Step 2: Create product
         result = product_service.create_product(command)
         context.product_id = result.product_id
-        
-        # Step 3: Publish event (optional)
+         - skip if not needed)
+        # event_service = get_event_service()
+        # if event_service:
+        #     Step 3: Publish event (optional)
         # event_service.publish("product.created", context.product_id)
         
         return context

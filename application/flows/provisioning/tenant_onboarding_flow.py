@@ -16,7 +16,6 @@ from ...contracts.provisioning import (
 )
 from ...dto.identity import SignupCommand
 from ...services.flow_context import FlowContext
-from ...flow_rules.services.toggles import FlowToggleService
 
 
 class ProvisioningStep(str, Enum):
@@ -45,7 +44,6 @@ class TenantOnboardingFlow:
     
     def __init__(
         self,
-        toggle_service: FlowToggleService,
         signup_handler: SignupHandler,
         verify_handler: Optional[VerifyEmailHandler] = None,
         signin_handler: Optional[SigninHandler] = None,
@@ -56,7 +54,6 @@ class TenantOnboardingFlow:
         charge_handler: Optional[ChargeHandler] = None,
         activate_handler: Optional[ActivateTenantHandler] = None,
     ) -> None:
-        self.toggle_service = toggle_service
         self.signup_handler = signup_handler
         self.verify_handler = verify_handler
         self.signin_handler = signin_handler
@@ -86,9 +83,6 @@ class TenantOnboardingFlow:
     
     def _execute_signup_step(self, context: FlowContext, command: SignupCommand) -> FlowContext:
         """Step 1: Register new user."""
-        if not self._is_enabled(ProvisioningStep.SIGNUP):
-            return context
-        
         result = self.signup_handler(command)
         context.user_id = result.user_id
         context.set_meta("verify_required", str(result.verify_required))
@@ -96,8 +90,6 @@ class TenantOnboardingFlow:
     
     def _execute_verify_email_step(self, context: FlowContext) -> FlowContext:
         """Step 2: Verify user email."""
-        if not self._is_enabled(ProvisioningStep.VERIFY_EMAIL):
-            return context
         if not self.verify_handler:
             return context
         
@@ -107,8 +99,6 @@ class TenantOnboardingFlow:
     
     def _execute_signin_step(self, context: FlowContext) -> FlowContext:
         """Step 3: Sign in user to establish session."""
-        if not self._is_enabled(ProvisioningStep.SIGNIN):
-            return context
         if not self.signin_handler:
             return context
         
@@ -119,8 +109,6 @@ class TenantOnboardingFlow:
     
     def _execute_create_tenant_step(self, context: FlowContext) -> FlowContext:
         """Step 4: Create tenant for user."""
-        if not self._is_enabled(ProvisioningStep.CREATE_TENANT):
-            return context
         if not self.create_tenant_handler:
             return context
         
@@ -131,8 +119,6 @@ class TenantOnboardingFlow:
     
     def _execute_resolve_subscription_step(self, context: FlowContext) -> FlowContext:
         """Step 5: Resolve subscription terms (trial, plan selection)."""
-        if not self._is_enabled(ProvisioningStep.RESOLVE_SUBSCRIPTION):
-            return context
         if not self.resolve_subscription_handler:
             return context
         
@@ -143,8 +129,6 @@ class TenantOnboardingFlow:
     
     def _execute_assign_plan_step(self, context: FlowContext) -> FlowContext:
         """Step 6: Assign pricing plan to tenant."""
-        if not self._is_enabled(ProvisioningStep.ASSIGN_PLAN):
-            return context
         if not self.assign_plan_handler:
             return context
         
@@ -156,9 +140,6 @@ class TenantOnboardingFlow:
     
     def _execute_quote_payment_step(self, context: FlowContext) -> FlowContext:
         """Step 7: Quote and charge payment if required."""
-        if not self._is_enabled(ProvisioningStep.QUOTE_PAYMENT):
-            return context
-        
         if context.requires_payment:
             if self.quote_handler:
                 quote_result = self.quote_handler(context)
@@ -175,17 +156,9 @@ class TenantOnboardingFlow:
     
     def _execute_activate_tenant_step(self, context: FlowContext) -> FlowContext:
         """Step 8: Activate tenant (final step)."""
-        if not self._is_enabled(ProvisioningStep.ACTIVATE_TENANT):
-            return context
         if not self.activate_handler:
             return context
         
         result = self.activate_handler(context)
         context.set_meta("activation_status", result.status)
         return context
-    
-    # Helpers ------------------------------------------------------------
-    
-    def _is_enabled(self, step: ProvisioningStep) -> bool:
-        """Check if a step is enabled via toggle service."""
-        return self.toggle_service.is_step_enabled(self.FLOW_CODE, step.value)

@@ -8,12 +8,14 @@ PriceSynC là một nền tảng SaaS đa-tenant được xây dựng xung quanh
 
 ```
 Saas_app/
-├── application/                # Điều phối đa-mô-đun, DTO, adapter giao diện, toggle
-│   ├── dto/                    # DTO ứng dụng (command, result, context)
-│   ├── use_cases/              # Hành động đơn lẻ (signup, create_tenant, ...)
-│   ├── orchestrators/          # Luồng nhiều bước (provisioning, ...)
-│   ├── flow_rules/             # Toggle Boolean cho từng bước luồng
-│   └── interfaces/             # Adapter giao diện (HTTP, CLI, Celery, webhook)
+├── application/                # Điều phối đa-mô-đun, DTO, flow, adapter giao diện
+│   ├── dto/                    # DTO ứng dụng (command, context, result)
+│   ├── flows/                  # Flow orchestrator (multi-step sequence)
+│   ├── contracts/              # Protocol definitions cho flow handler
+│   ├── config/                 # YAML config cho flows (metadata, documentation)
+│   ├── services/               # Shared utilities (FlowContext, config loader)
+│   ├── api/                    # HTTP API endpoints (DRF views, serializers)
+│   └── flow_rules/             # Toggle Boolean cho từng bước luồng (deprecated - use YAML config)
 ├── config/                     # Cấu hình Django project
 ├── core/                       # Mô-đun nền tảng (identity, tenants, billing, ...)
 ├── services/                   # Mô-đun nghiệp vụ tùy chọn (products, crawl, ...)
@@ -25,75 +27,99 @@ Saas_app/
 ```
 
 **Thay đổi chính:**
-- `core.<module>.api` đã không dùng nữa. API mới nằm dưới `application/interfaces/<type>/<flow>/`.
-- Mô-đun giữ cấu trúc phân lớp nhưng **KHÔNG có thư mục api**.
+- ✅ API endpoint nằm dưới `application/api/<domain>/` (không phải `interfaces/<type>/`)
+- ✅ Flow orchestrator nằm dưới `application/flows/<domain>/` (không phải `orchestrators/`)
+- ✅ Thêm `application/contracts/` để define Protocol handler
+- ✅ Thêm `application/services/` cho shared utilities (FlowContext, loader)
+- ✅ Thêm `application/config/` cho YAML metadata flow
+- ❌ Mô-đun **KHÔNG có thư mục api** (chỉ giữ domain, repositories, infrastructure, services)
+- ⚠️ `flow_rules/` đã deprecated - dùng YAML config thay vào
 
 ---
 
 ## 2. Lớp Application (Lớp Điều Phối Trung Tâm)
 
 Lớp application là điểm vào duy nhất cho mọi quy trình chạy. Nó:
-- Ghép nối các bước liên quan đến nhiều mô-đun.
+- Ghép nối các bước liên quan đến nhiều mô-đun (multi-step flow).
 - Áp dụng chính sách nền tảng trước khi gọi module service.
-- Xác định DTO ổn định cho giao diện.
-- Cho phép admin bật/tắt bước mà không cần sửa code (toggle).
+- Xác định DTO ổn định (contract) cho HTTP API.
+- Cho phép quản lý flow behavior qua YAML config (metadata, documentation).
 
 ### 2.1 Cấu Trúc Chi Tiết
 
-#### a. **application/dto/** – Hợp Đồng Dữ Liệu
-Định nghĩa các command (đầu vào) và result (kết quả) được sử dụng across orchestrators:
-- `SignupCommand`, `ProvisioningContext`: DTO lệnh
-- `SignupResult`, `CreateTenantResult`: DTO kết quả
-- Quy tắc: DTO ứng dụng **không bao giờ chứa logic domain** và **không được mô-đun dùng**
+#### a. **application/api/** – HTTP API Endpoint (Controller Layer)
+Chứa DRF views, serializers, URL router cho HTTP endpoints:
+- Vai trò: Nhận request từ client (SPA/Mobile) → validate → gọi flow → format response
+- Cấu trúc: `api/<domain>/` (e.g., `api/identity/`, `api/provisioning/`, `api/business/`)
+- Mỗi file = một endpoint (e.g., `signup.py`, `signin.py`, `recover_password.py`)
+- Quy tắc: Không chứa logic, chỉ validate → flow → JSON response
+- Response chuẩn: `{"success": bool, "data": {}, "error": null, "message": str}`
 
-#### b. **application/use_cases/** – Hành Động Đơn Lẻ
-Mỗi file định nghĩa một hành động kinh doanh nhỏ:
-- Ví dụ: `SignupUseCase`, `CreateTenantUseCase`, `AssignPlanUseCase`
-- Mô tả: Nhận DTO command → gọi 1–2 mô-đun service via provider → trả DTO result
-- **Không quản lý context dài**: Orchestrator xử lý ghép nối
+#### b. **application/dto/** – Data Transfer Objects (Contract)
+Định nghĩa các command (input), context (state), result (output) được sử dụng in flows:
+- `SignupCommand`: Input từ API request
+- `SignupContext`: State qua từng bước flow
+- `SignupResult`: Output trả về client
+- Quy tắc: DTO ứng dụng **không chứa logic domain** và **không được mô-đun dùng trực tiếp**
+- Immutable nếu có thể (frozen=True)
 
-#### c. **application/orchestrators/** – Luồng Nhiều Bước
-Ghép nhiều use case thành sequence cố định:
-- Ví dụ: `ProvisioningFlowOrchestrator` (signup → verify → signin → tenant → ... → activate)
-- Mô tả: Nhận command ban đầu → thực thi từng use case → cập nhật context → trả context cuối
-- **Tôn trọng toggle**: Trước mỗi bước, kiểm tra toggle; nếu disable → bỏ qua bước nhưng giữ context
+#### c. **application/flows/** – Flow Orchestrator (Multi-Step Sequence)
+Ghép nhiều module service thành sequence cố định:
+- Ví dụ: `signup_flow.py` (3 bước), `tenant_onboarding_flow.py` (8 bước)
+- Vai trò: Nhận command ban đầu → thực thi từng bước → cập nhật context → trả context cuối
+- Bước nào được skip? Nếu handler không được inject hoặc không cần thiết
+- Quy tắc: Không truy cập DB trực tiếp, chỉ gọi module service qua provider hoặc inject
 
-#### d. **application/flow_rules/** – Toggle Cấu Hình
-Lưu trữ Boolean toggle cho từng bước luồng (flow_code + step_code → is_enabled):
-- Django Admin: Admin có thể bật/tắt bước
-- **Lưu ý**: Đây là **infrastructure**, application chỉ **đọc** để biết có thực thi bước hay không
-- **Không ảnh hưởng logic**: Nếu toggle = false, bước bị bỏ qua nhưng context vẫn chuyển tiếp
+#### d. **application/contracts/** – Protocol/Interface Definitions
+Định nghĩa Protocol (typing.Protocol) cho flow handler:
+- Ví dụ: `SignupHandlerProtocol`, `EmailHandlerProtocol`, `TenantHandlerProtocol`
+- Vai trò: Define contract giữa flow và module service
+- Lợi ích: Decouple flow khỏi implementation cụ thể, dễ mock trong test
+- Quy tắc: Chỉ định nghĩa method signature, không implement
 
-#### e. **application/interfaces/** – Adapter Giao Diện
-Chứa các adapter để dịch input external sang DTO ứng dụng:
-- `interfaces/http/`: DRF adapter cho HTTP
-- `interfaces/cli/`: Adapter CLI
-- `interfaces/celery/`: Adapter Celery task
-- `interfaces/webhook/`: Adapter webhook
-- Mỗi adapter: Hiểu input của nó → dịch sang DTO → gọi use case/orchestrator → định dạng output
+#### e. **application/config/** – YAML Config (Flow Metadata)
+Cấu hình flow dưới dạng YAML (metadata, documentation):
+- Ví dụ: `provisioning.yaml`, `identity.yaml`, `billing.yaml`
+- Vai trò: Document flow steps, description, owner
+- Lợi ích: Dễ đọc, dễ maintain, không ảnh hưởng runtime
+- Note: Không phải toggle Boolean (cái đó nằm ở `flow_rules/`)
+
+#### f. **application/services/** – Shared Utilities
+Chứa shared utilities cho application layer:
+- `flow_context.py`: FlowContext manager (giữ state xuyên suốt flow)
+- `config_loader.py`: Load YAML config
+- `flow_logger.py`: Flow execution logger
+- Quy tắc: Không chứa logic domain, chỉ hỗ trợ flow execution
+
+#### g. **application/flow_rules/** – Toggle Boolean (Deprecated)
+Lưu trữ Boolean toggle cho từng bước luồng:
+- ⚠️ **Deprecated** - dùng YAML config trong `application/config/` thay vào
+- Cách cũ: flow_code + step_code → is_enabled (database model)
+- Cách mới: YAML metadata cho documentation, logic trong flow orchestrator
 
 ### 2.2 Quy Tắc Phụ Thuộc (Một Chiều Chặt)
 
 ```
-Module domain (kinh doanh thuần)
+Module domain (logic kinh doanh thuần)
   ↑
-Module repositories (trừu tượng)
+Module repositories (truy cập dữ liệu trừu tượng)
   ↑
-Module infrastructure (ORM, admin)
+Module infrastructure (ORM, admin adapter)
   ↑
 Module services (use_cases + providers)
   ↑
-Application (use_cases + orchestrators + flow_rules)
+Application (flows + api + dto + contracts)
   ↑
-Application/interfaces (adapter HTTP, CLI, Celery, webhook)
+Application/api (HTTP endpoint - entry point cho client)
 ```
 
 **Cấm tuyệt đối:**
 - ❌ Module **KHÔNG BAO GIỜ** import `application`
+- ❌ Module **KHÔNG CÓ** thư mục `api/` (API endpoint nằm ở `application/api/`)
 - ❌ Application **không truy cập ORM trực tiếp** (chỉ gọi module service via provider)
 - ❌ Domain **không import Django/DRF**
 - ❌ Services **không trả ORM model** (trả domain entity hoặc DTO)
-- ❌ Giao diện **không chứa logic kinh doanh** (chỉ dịch input → DTO)
+- ❌ HTTP API **không chứa logic kinh doanh** (chỉ validate → flow → response)
 
 **Hệ quả:**
 - Thay đổi application logic → không ảnh hưởng mô-đun
@@ -102,20 +128,57 @@ Application/interfaces (adapter HTTP, CLI, Celery, webhook)
 
 ---
 
-## 3. Luồng Onboarding và Toggle Cấu Hình
+## 3. Flow Orchestration Pattern
 
-Luồng onboarding là xương sống cố định:
+### 3.1 Ví Dụ: Tenant Onboarding Flow
+
+Luồng (flow) là xương sống cố định để orchestrate multiple steps:
 
 ```
-Đăng ký → Xác thực Email → Đăng nhập → Tạo Tenant → Giải quyết Subscription 
-→ Chọn Plan → Báo giá/Thanh toán → Kích hoạt Tenant
+Signup → Verify Email → Signin → Create Tenant → Resolve Subscription
+→ Assign Plan → Quote/Charge → Activate Tenant
 ```
 
-- Mỗi bước là một use case hoặc hành động nhỏ
-- Mỗi bước được ánh xạ đến một toggle Boolean trong `application/flow_rules`
-- **Admin công cụ**: Django admin tại **Application Flow Toggles** cho phép bật/tắt từng bước
-- **Quy trình**: Orchestrator đọc toggle trước khi gọi handler; nếu disable → bỏ qua nhưng context vẫn chuyển tiếp
-- **Wiring**: Handler được tiêm via provider của từng mô-đun (identity, tenants, subscription, billing, notification)
+Mỗi bước là:
+- **Input:** DTO command (cho bước đầu) hoặc FlowContext (cho bước tiếp)
+- **Process:** Gọi module service (via provider hoặc inject)
+- **Output:** Update FlowContext với kết quả
+- **Skip logic:** Nếu handler không inject → bước được skip, context vẫn chuyển tiếp
+
+### 3.2 YAML Config vs Toggle
+
+**YAML Config** (`application/config/`):
+- Metadata flow: description, steps, owner
+- Dùng cho documentation, không affect runtime
+- Dễ đọc và maintain
+
+**Toggle Boolean** (`application/flow_rules/`):
+- Database model: flow_code + step_code → is_enabled
+- Admin có thể bật/tắt từng bước qua Django Admin
+- **⚠️ Deprecated** - nên dùng YAML config thay vào
+- Quy trình cũ: Orchestrator đọc toggle, nếu disable → bỏ qua bước
+
+### 3.3 Handler Injection Pattern
+
+**Pattern 1: Provider Factory**
+```python
+from core.identity.services.providers import get_signup_service
+service = get_signup_service()  # Get real implementation
+```
+
+**Pattern 2: Constructor Injection**
+```python
+flow = SignupFlow(signup_handler=mock_handler)
+```
+
+**Pattern 3: Lazy Loading**
+```python
+@property
+def signup_service(self):
+    if self._signup_service is None:
+        self._signup_service = get_signup_service()
+    return self._signup_service
+```
 
 Mẫu này sẽ được tái sử dụng cho các luồng khác (khôi phục churn, quy trình tùy chỉnh) khi cần.
 
@@ -171,47 +234,185 @@ module_name/
 
 ---
 
-## 5. Giao Diện HTTP và Các Adapter
+## 5. HTTP API Layer Pattern
 
-Vì API tập trung ở application, mỗi adapter tuân theo cùng mẫu:
+### 5.1 Kiến Trúc API Endpoint
 
 ```
-Input (JSON) → Serializer.validate() → DTO → Use case/Orchestrator → Output (JSON)
+POST /api/identity/signup/ (HTTP Request)
+  ↓
+application/api/identity/signup.py (APIView)
+  ↓ SignupSerializer.validate() → SignupCommand (DTO)
+  ↓
+application/flows/identity/signup_flow.py (Flow orchestrator)
+  ↓ gọi module service (identity, notification, tenant, ...)
+  ↓
+JSON Response: {"success": true, "data": {...}}
 ```
 
-### 5.1 Cấu Trúc Adapter
+### 5.2 Cấu Trúc API Endpoint
 ```
-application/interfaces/http/
-├── provisioning/
-│   ├── serializers.py      # SignupSerializer → SignupCommand
-│   ├── views.py            # Gọi ProvisioningFlowOrchestrator
-│   └── urls.py             # Đăng ký endpoint
-├── billing/
-│   ├── serializers.py      # PaymentSerializer
-│   ├── views.py            # Gọi PaymentOrchestrator
+application/api/
+├── identity/
+│   ├── signup.py           # POST /api/identity/signup/
+│   ├── signin.py           # POST /api/identity/signin/
+│   ├── recover_password.py # POST /api/identity/recover-password/
 │   └── urls.py
+├── provisioning/
+│   ├── create_tenant.py    # POST /api/provisioning/tenants/
+│   └── urls.py
+├── business/
+│   ├── create_product.py   # POST /api/business/products/
+│   └── urls.py
+└── urls.py                 # URL router tổng hợp
 ```
 
-### 5.2 Phản Hồi Tiêu Chuẩn
+### 5.3 Mẫu API Endpoint
+```python
+# application/api/identity/signup.py
+class SignupSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(min_length=8)
+    
+    def to_command(self) -> SignupCommand:
+        return SignupCommand(**self.validated_data)
+
+class SignupAPIView(APIView):
+    def post(self, request):
+        serializer = SignupSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        command = serializer.to_command()
+        flow = SignupFlow()  # hoặc get_signup_flow()
+        context = flow.execute(command)
+        
+        return Response({
+            "success": True,
+            "data": {
+                "user_id": context.user_id,
+                "email": context.email,
+                "requires_verification": context.requires_verification
+            },
+            "error": None,
+            "message": "Signup successful"
+        }, status=status.HTTP_201_CREATED)
+```
+
+### 5.4 Phản Hồi Tiêu Chuẩn
 ```json
 {
   "success": true,
   "data": {...},
   "error": null,
-  "message": ""
+  "message": "Operation completed successfully"
 }
 ```
 
-### 5.3 Ưu Điểm
-- **Tái sử dụng logic**: Cùng orchestrator được gọi từ HTTP, CLI, Celery, webhook
-- **Độc lập giao diện**: Thêm giao diện mới mà không ảnh hưởng orchestrator
-- **Kiểm thử dễ**: Kiểm thử orchestrator độc lập với HTTP
+### 5.5 Ưu Điểm
+- **Tái sử dụng flow**: Cùng flow được gọi từ HTTP, CLI, Celery, webhook
+- **Độc lập giao diện**: Thêm giao diện mới mà không ảnh hưởng flow logic
+- **Kiểm thử dễ**: Kiểm thử flow với mock handlers độc lập với HTTP layer
 
 ---
 
-## 6. Hai Luồng Truy Cập Hệ Thống
+## 6. Flow Development Workflow
 
-### 6.1 Luồng Backoffice (Django Admin) – Quản Trị Viên Hệ Thống
+### 6.1 Bước Tạo Flow Mới
+
+**Bước 1:** Định nghĩa DTO
+```python
+# application/dto/identity.py
+@dataclass
+class SignupCommand:
+    email: str
+    password: str
+    source: str = "web"
+
+@dataclass
+class SignupContext:
+    user_id: Optional[str] = None
+    verification_token: Optional[str] = None
+    requires_verification: bool = False
+
+@dataclass
+class SignupResult:
+    user_id: str
+    requires_verification: bool
+```
+
+**Bước 2:** Định nghĩa Contract/Protocol (nếu cần decouple)
+```python
+# application/contracts/identity.py
+class SignupHandlerProtocol(Protocol):
+    def check_email_unique(self, email: str) -> bool: ...
+    def create_user(self, email: str, password: str) -> User: ...
+```
+
+**Bước 3:** Implement Flow Orchestrator
+```python
+# application/flows/identity/signup_flow.py
+@dataclass
+class SignupFlow:
+    signup_handler: Optional[SignupHandlerProtocol] = None
+    
+    def execute(self, command: SignupCommand) -> SignupContext:
+        service = self.signup_handler or get_signup_service()
+        # Step 1, 2, 3...
+        return context
+```
+
+**Bước 4:** Tạo API Endpoint
+```python
+# application/api/identity/signup.py
+class SignupAPIView(APIView):
+    def post(self, request):
+        serializer = SignupSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        command = serializer.to_command()
+        flow = SignupFlow()
+        context = flow.execute(command)
+        return Response({...})
+```
+
+**Bước 5:** Đăng ký URL
+```python
+# application/api/urls.py
+urlpatterns = [
+    path('identity/', include('application.api.identity.urls')),
+    ...,
+]
+```
+
+**Bước 6:** Viết Test
+```python
+# Unit test flow (mock handler)
+def test_signup_flow():
+    mock_handler = Mock()
+    flow = SignupFlow(signup_handler=mock_handler)
+    context = flow.execute(command)
+    assert context.user_id is not None
+
+# Integration test (real module)
+@pytest.mark.django_db
+def test_signup_api():
+    response = client.post('/api/identity/signup/', {...})
+    assert response.status_code == 201
+```
+
+### 6.2 Khi Nào Tạo Flow vs Direct API Call
+
+| Trường hợp | Pattern |
+|-----------|---------|
+| Use case đơn giản (1 module call) | Gọi trực tiếp service từ view |
+| Use case phức tạp (2+ module, state) | Tạo Flow orchestrator |
+| Background job (async task) | Tạo Flow, call từ Celery adapter |
+| CLI command | Tạo Flow, call từ CLI adapter |
+
+---
+
+## 7. Hai Luồng Truy Cập Hệ Thống
+
+### 7.1 Luồng Backoffice (Django Admin) – Quản Trị Viên Hệ Thống
 
 **Mục đích**: Giao diện quản trị nội bộ cho system admin, **hoàn toàn tách biệt** với khách hàng.
 
@@ -266,7 +467,7 @@ class TenantAdmin(admin.ModelAdmin):
 - ✅ Admin **PHẢI** gọi module service cho mọi hành động nghiệp vụ
 - ✅ Admin chỉ đọc dữ liệu qua queryset đơn giản, ghi qua service
 
-### 6.2 Luồng Frontend (API) – Khách Hàng
+### 7.2 Luồng Frontend (API) – Khách Hàng
 
 **Mục đích**: Giao diện người dùng cuối (end-user) qua React SPA.
 
@@ -322,7 +523,7 @@ JSON: {"success": true, "data": {"user_id": "...", "tenant_id": "..."}}
 
 ---
 
-## 7. Multi-Tenancy
+## 8. Multi-Tenancy
 
 Nền tảng sử dụng `django-tenants` với cô lập schema-per-tenant:
 
@@ -332,19 +533,17 @@ Nền tảng sử dụng `django-tenants` với cô lập schema-per-tenant:
 
 ---
 
-## 8. Thêm Luồng Mới
+## 9. Checklist Khi Thêm Flow Mới
 
-1. Định nghĩa DTO command/result trong `application/dto/`
-2. Viết use case hoặc orchestrator dưới `application/use_cases/` hoặc `application/orchestrators/`
-3. Dây dẫn module service via provider
-4. Tạo adapter giao diện dưới `application/interfaces/<type>/<flow>/`
-5. Đăng ký URL và include từ `config/urls.py`
-6. Thêm toggle nếu cần điều khiển runtime
-7. Viết kiểm thử từ cấp ứng dụng
-
----
-
-## Tóm Tắt Nguyên Tắc
+- [ ] Định nghĩa DTO (Command, Context, Result) trong `application/dto/<domain>.py`
+- [ ] Định nghĩa Contract/Protocol trong `application/contracts/<domain>.py` (nếu cần decouple)
+- [ ] Implement Flow Orchestrator trong `application/flows/<domain>/<flow_name>.py`
+- [ ] Tạo API endpoint trong `application/api/<domain>/<endpoint_name>.py`
+- [ ] Đăng ký URL trong `application/api/<domain>/urls.py` và include từ `application/api/urls.py`
+- [ ] Tạo YAML config trong `application/config/<domain>.yaml` (nếu cần documentation)
+- [ ] Viết unit test cho flow (mock handlers)
+- [ ] Viết integration test cho API endpoint (real modules)
+- [ ] Cập nhật documentation (README này)
 
 | Thành phần | Trách nhiệm | Import | Export |
 |---|---|---|---|
@@ -355,4 +554,4 @@ Nền tảng sử dụng `django-tenants` với cô lập schema-per-tenant:
 | **Application** | Ghép nối mô-đun | Module service (provider) | DTO result |
 | **Giao diện** | Dịch input → DTO | Application | JSON/output |
 
-**Quy tắc vàng**: Module không bao giờ nhìn thấy Application. Application nhìn thấy mô-đun qua provider. Giao diện nhìn thấy Application. Một chiều, không bao giờ đảo ngược.
+**Nguyên tắc vàng**: Module không bao giờ nhìn thấy Application. Application nhìn thấy mô-đun qua provider. Giao diện nhìn thấy Application. Một chiều, không bao giờ đảo ngược.

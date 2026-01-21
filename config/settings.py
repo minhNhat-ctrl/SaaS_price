@@ -61,8 +61,6 @@ SHARED_APPS = [
     'django.contrib.staticfiles',
     # Application layer (orchestration, DTO, interfaces, flow control)
     'application.apps.ApplicationConfig',
-    # Application-level flow toggles (admin configurable)
-    'application.flow_rules.apps.FlowRulesConfig',
     # Tenant metadata lives in the public schema
     'core.tenants.apps.TenantsConfig',
     # Access Module MUST be in SHARED_APPS (memberships are global, not per-tenant)

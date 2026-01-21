@@ -45,10 +45,6 @@ urlpatterns = [
     # - /api/provisioning/create-tenant/
     # - /api/business/create-product/
     path('api/', include('application.api.urls')),
-    
-    # Legacy provisioning endpoint (kept for backward compatibility)
-    # Will be deprecated once frontend migrates to /api/identity/signup/
-    path('api/provisioning/', include('application.interfaces.http.provisioning.urls')),
 ]
 
 # Admin URL for reference (check via manage.py shell or logs)

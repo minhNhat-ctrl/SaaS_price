@@ -2,7 +2,6 @@
 from typing import Optional
 
 from application.flows.provisioning.tenant_onboarding_flow import TenantOnboardingFlow
-from application.flow_rules.services.toggles import get_flow_toggle_service
 
 
 # Global instance
@@ -42,10 +41,7 @@ def create_onboarding_flow(
     
     If handlers are not provided, uses defaults/placeholders.
     """
-    toggle_service = get_flow_toggle_service()
-    
     return TenantOnboardingFlow(
-        toggle_service=toggle_service,
         signup_handler=signup_handler or _default_signup_handler,
         verify_handler=verify_handler,
         signin_handler=signin_handler,
