@@ -87,6 +87,7 @@ TENANT_APPS = [
     'django.contrib.staticfiles',
     # Authentication provider (allauth)
     'allauth',
+    'corsheaders',
     'allauth.account',
     'allauth.socialaccount',
     # Core Admin Module (phải load trước các modules khác)
@@ -103,6 +104,7 @@ TENANT_APPS = [
 INSTALLED_APPS = SHARED_APPS + [app for app in TENANT_APPS if app not in SHARED_APPS]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -287,3 +289,41 @@ ADMIN_ENABLE_HASH = False
 
 # Admin hash service will be initialized in apps.py
 # ADMIN_HASH_SERVICE will be set there
+
+# CORS Configuration
+CORS_ALLOWED_ORIGINS = [
+    "https://app.2kvietnam.com",
+    "http://app.2kvietnam.com",
+    "https://dj.2kvietnam.com",
+    "http://dj.2kvietnam.com",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+CORS_EXPOSE_HEADERS = [
+    'content-type',
+    'x-csrftoken',
+]

@@ -187,10 +187,121 @@ class NotificationLogQuery:
     limit: int = 50
 
 
+# ============================================================
+# Specialized Email DTOs for Common Identity Notifications
+# ============================================================
+
+
+@dataclass(slots=True)
+class VerificationEmailCommand:
+    """Command to send email verification link."""
+    
+    recipient_email: str
+    verification_token: str
+    verification_url: str
+    language: str = "en"
+    sender_key: Optional[str] = None  # If None, use default
+    
+    def to_send_notification_command(self) -> SendNotificationCommand:
+        """Convert to generic SendNotificationCommand."""
+        return SendNotificationCommand(
+            template_key="email_verification",
+            channel=Channel.EMAIL,
+            recipient=self.recipient_email,
+            language=self.language,
+            sender_key=self.sender_key,
+            context={
+                "verification_token": self.verification_token,
+                "verification_url": self.verification_url,
+                "email": self.recipient_email,
+            },
+        )
+
+
+@dataclass(slots=True)
+class PasswordResetEmailCommand:
+    """Command to send password reset link."""
+    
+    recipient_email: str
+    reset_token: str
+    reset_url: str
+    language: str = "en"
+    sender_key: Optional[str] = None
+    
+    def to_send_notification_command(self) -> SendNotificationCommand:
+        """Convert to generic SendNotificationCommand."""
+        return SendNotificationCommand(
+            template_key="password_reset",
+            channel=Channel.EMAIL,
+            recipient=self.recipient_email,
+            language=self.language,
+            sender_key=self.sender_key,
+            context={
+                "reset_token": self.reset_token,
+                "reset_url": self.reset_url,
+                "email": self.recipient_email,
+            },
+        )
+
+
+@dataclass(slots=True)
+class WelcomeEmailCommand:
+    """Command to send welcome email to new user."""
+    
+    recipient_email: str
+    recipient_name: Optional[str] = None
+    language: str = "en"
+    sender_key: Optional[str] = None
+    
+    def to_send_notification_command(self) -> SendNotificationCommand:
+        """Convert to generic SendNotificationCommand."""
+        return SendNotificationCommand(
+            template_key="welcome_email",
+            channel=Channel.EMAIL,
+            recipient=self.recipient_email,
+            language=self.language,
+            sender_key=self.sender_key,
+            context={
+                "email": self.recipient_email,
+                "name": self.recipient_name or self.recipient_email.split("@")[0],
+            },
+        )
+
+
+@dataclass(slots=True)
+class MagicLinkEmailCommand:
+    """Command to send passwordless login link."""
+    
+    recipient_email: str
+    magic_token: str
+    magic_link_url: str
+    language: str = "en"
+    sender_key: Optional[str] = None
+    
+    def to_send_notification_command(self) -> SendNotificationCommand:
+        """Convert to generic SendNotificationCommand."""
+        return SendNotificationCommand(
+            template_key="magic_link",
+            channel=Channel.EMAIL,
+            recipient=self.recipient_email,
+            language=self.language,
+            sender_key=self.sender_key,
+            context={
+                "magic_token": self.magic_token,
+                "magic_link_url": self.magic_link_url,
+                "email": self.recipient_email,
+            },
+        )
+
+
 __all__ = [
     "SendNotificationCommand",
     "NotificationLogDTO",
     "NotificationSenderDTO",
     "NotificationTemplateDTO",
     "NotificationLogQuery",
+    "VerificationEmailCommand",
+    "PasswordResetEmailCommand",
+    "WelcomeEmailCommand",
+    "MagicLinkEmailCommand",
 ]

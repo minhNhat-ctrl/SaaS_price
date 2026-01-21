@@ -142,28 +142,170 @@ class NotificationService:
         """
         Send via configured provider.
         
-        This is a placeholder - actual implementation would delegate to:
+        Routes to appropriate adapter based on sender.provider and channel:
         - SendGridAdapter for EMAIL/sendgrid
         - TwilioAdapter for SMS/twilio
         - FirebaseAdapter for PUSH/firebase
         - WebhookAdapter for WEBHOOK
         
         Args:
-            sender: Configured sender
+            sender: Configured sender entity
             recipient: Email/phone/token/URL
             subject: Email subject or message title
             body: Email body or message content
             context: Original context for provider-specific metadata
         
         Returns:
-            Provider's message ID or None
+            Provider's message ID (external reference)
         
         Raises:
             NotificationSendError: If sending fails
         """
         
-        # TODO: Implement provider adapters
-        # For now, simulate success
+        # Route based on channel + provider
+        if sender.channel.value == "email":
+            if sender.provider == "sendgrid":
+                return self._send_via_sendgrid(sender, recipient, subject, body, context)
+            elif sender.provider == "smtp":
+                return self._send_via_smtp(sender, recipient, subject, body, context)
+            else:
+                raise NotificationSendError(f"Unknown email provider: {sender.provider}")
+        
+        elif sender.channel.value == "sms":
+            if sender.provider == "twilio":
+                return self._send_via_twilio(sender, recipient, body, context)
+            else:
+                raise NotificationSendError(f"Unknown SMS provider: {sender.provider}")
+        
+        elif sender.channel.value == "push":
+            if sender.provider == "firebase":
+                return self._send_via_firebase(sender, recipient, subject, body, context)
+            else:
+                raise NotificationSendError(f"Unknown PUSH provider: {sender.provider}")
+        
+        elif sender.channel.value == "webhook":
+            return self._send_via_webhook(sender, recipient, subject, body, context)
+        
+        else:
+            raise NotificationSendError(f"Unknown channel: {sender.channel.value}")
+    
+    # ============================================================
+    # Provider Adapters (Placeholder Implementations)
+    # ============================================================
+    
+    def _send_via_sendgrid(
+        self,
+        sender: NotificationSender,
+        recipient: str,
+        subject: str,
+        body: str,
+        context: dict,
+    ) -> str:
+        """Send via SendGrid API."""
+        # TODO: Implement SendGrid adapter
+        # import sendgrid
+        # sg = sendgrid.SendGridAPIClient(sender.api_key)
+        # message = Mail(
+        #     from_email=sender.from_email,
+        #     to_emails=recipient,
+        #     subject=subject,
+        #     html_content=body,
+        # )
+        # response = sg.send(message)
+        # return response.headers.get('X-Message-Id')
+        
+        import uuid
+        return str(uuid.uuid4())
+    
+    def _send_via_smtp(
+        self,
+        sender: NotificationSender,
+        recipient: str,
+        subject: str,
+        body: str,
+        context: dict,
+    ) -> str:
+        """Send via SMTP."""
+        # TODO: Implement SMTP adapter
+        # import smtplib
+        # from email.mime.text import MIMEText
+        # msg = MIMEText(body)
+        # msg['Subject'] = subject
+        # msg['From'] = sender.from_email
+        # msg['To'] = recipient
+        # server = smtplib.SMTP(sender.smtp_host, sender.smtp_port)
+        # server.send_message(msg)
+        # server.quit()
+        
+        import uuid
+        return str(uuid.uuid4())
+    
+    def _send_via_twilio(
+        self,
+        sender: NotificationSender,
+        recipient: str,
+        body: str,
+        context: dict,
+    ) -> str:
+        """Send SMS via Twilio."""
+        # TODO: Implement Twilio adapter
+        # from twilio.rest import Client
+        # client = Client(sender.account_sid, sender.auth_token)
+        # message = client.messages.create(
+        #     from_=sender.phone_number,
+        #     to=recipient,
+        #     body=body,
+        # )
+        # return message.sid
+        
+        import uuid
+        return str(uuid.uuid4())
+    
+    def _send_via_firebase(
+        self,
+        sender: NotificationSender,
+        recipient: str,
+        subject: str,
+        body: str,
+        context: dict,
+    ) -> str:
+        """Send push notification via Firebase."""
+        # TODO: Implement Firebase adapter
+        # import firebase_admin
+        # from firebase_admin import messaging
+        # message = messaging.Message(
+        #     notification=messaging.Notification(
+        #         title=subject,
+        #         body=body,
+        #     ),
+        #     token=recipient,
+        # )
+        # response = messaging.send(message)
+        # return response
+        
+        import uuid
+        return str(uuid.uuid4())
+    
+    def _send_via_webhook(
+        self,
+        sender: NotificationSender,
+        recipient: str,
+        subject: str,
+        body: str,
+        context: dict,
+    ) -> str:
+        """Send via webhook (HTTP POST)."""
+        # TODO: Implement webhook adapter
+        # import requests
+        # payload = {
+        #     "recipient": recipient,
+        #     "subject": subject,
+        #     "body": body,
+        #     "context": context,
+        # }
+        # response = requests.post(recipient, json=payload, timeout=5)
+        # return response.json().get('message_id')
+        
         import uuid
         return str(uuid.uuid4())
     
@@ -179,3 +321,109 @@ class NotificationService:
         """Get recent send logs for template."""
 
         return self.log_repo.list_by_template_key(template_key, limit)
+    
+    # ============================================================
+    # Convenience Methods for Common Email Types
+    # ============================================================
+    
+    def send_verification_email(
+        self,
+        recipient_email: str,
+        verification_token: str,
+        verification_url: str,
+        language: str = "en",
+        sender_key: Optional[str] = None,
+    ) -> NotificationLog:
+        """
+        Send email verification link.
+        
+        Convenience method that wraps send_from_dto() with verification email DTO.
+        """
+        from core.notification.dto.contracts import VerificationEmailCommand
+        
+        cmd = VerificationEmailCommand(
+            recipient_email=recipient_email,
+            verification_token=verification_token,
+            verification_url=verification_url,
+            language=language,
+            sender_key=sender_key,
+        )
+        
+        notify_cmd = cmd.to_send_notification_command()
+        return self.send_from_dto(notify_cmd)
+    
+    def send_password_reset_email(
+        self,
+        recipient_email: str,
+        reset_token: str,
+        reset_url: str,
+        language: str = "en",
+        sender_key: Optional[str] = None,
+    ) -> NotificationLog:
+        """
+        Send password reset link.
+        
+        Convenience method that wraps send_from_dto() with password reset email DTO.
+        """
+        from core.notification.dto.contracts import PasswordResetEmailCommand
+        
+        cmd = PasswordResetEmailCommand(
+            recipient_email=recipient_email,
+            reset_token=reset_token,
+            reset_url=reset_url,
+            language=language,
+            sender_key=sender_key,
+        )
+        
+        notify_cmd = cmd.to_send_notification_command()
+        return self.send_from_dto(notify_cmd)
+    
+    def send_welcome_email(
+        self,
+        recipient_email: str,
+        recipient_name: Optional[str] = None,
+        language: str = "en",
+        sender_key: Optional[str] = None,
+    ) -> NotificationLog:
+        """
+        Send welcome email to new user.
+        
+        Convenience method that wraps send_from_dto() with welcome email DTO.
+        """
+        from core.notification.dto.contracts import WelcomeEmailCommand
+        
+        cmd = WelcomeEmailCommand(
+            recipient_email=recipient_email,
+            recipient_name=recipient_name,
+            language=language,
+            sender_key=sender_key,
+        )
+        
+        notify_cmd = cmd.to_send_notification_command()
+        return self.send_from_dto(notify_cmd)
+    
+    def send_magic_link_email(
+        self,
+        recipient_email: str,
+        magic_token: str,
+        magic_link_url: str,
+        language: str = "en",
+        sender_key: Optional[str] = None,
+    ) -> NotificationLog:
+        """
+        Send passwordless login link (magic link).
+        
+        Convenience method that wraps send_from_dto() with magic link email DTO.
+        """
+        from core.notification.dto.contracts import MagicLinkEmailCommand
+        
+        cmd = MagicLinkEmailCommand(
+            recipient_email=recipient_email,
+            magic_token=magic_token,
+            magic_link_url=magic_link_url,
+            language=language,
+            sender_key=sender_key,
+        )
+        
+        notify_cmd = cmd.to_send_notification_command()
+        return self.send_from_dto(notify_cmd)
