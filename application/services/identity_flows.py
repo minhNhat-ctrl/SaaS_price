@@ -7,6 +7,7 @@ from application.flows.identity import (
     SigninFlow,
     PasswordRecoveryFlow,
     VerifyEmailFlow,
+    PasswordResetConfirmFlow,
 )
 from application.services.config_loader import load_identity_config
 
@@ -33,3 +34,9 @@ def get_verify_email_flow() -> VerifyEmailFlow:
     """Create VerifyEmailFlow with identity.yaml config."""
     config = load_identity_config()
     return VerifyEmailFlow(config=config)
+
+
+def get_password_reset_confirm_flow() -> PasswordResetConfirmFlow:
+    """Create PasswordResetConfirmFlow with identity.yaml config."""
+    config = load_identity_config()
+    return PasswordResetConfirmFlow(config=config)
