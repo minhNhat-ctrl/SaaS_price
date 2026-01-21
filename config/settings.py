@@ -229,6 +229,30 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ============================================================
+# Cache Configuration (for verification tokens, sessions, etc.)
+# ============================================================
+# Development: use local memory cache (no Redis needed)
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache',
+        'LOCATION': '/var/tmp/django_cache',
+        'TIMEOUT': 86400,  # 24 hours default
+        'OPTIONS': {
+            'MAX_ENTRIES': 10000,
+        }
+    }
+}
+
+# For production: use Redis for distributed cache
+# CACHES = {
+#     'default': {
+#         'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+#         'LOCATION': 'redis://127.0.0.1:6379/1',
+#         'TIMEOUT': 86400,
+#     }
+# }
+
+# ============================================================
 # Email Configuration
 # ============================================================
 # For development: console backend (prints emails to console)
