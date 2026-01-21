@@ -1,0 +1,103 @@
+# ============================================================
+# Identity Flows Configuration
+# Minimal config - only fields needed by flows & modules
+# ============================================================
+
+# Frontend URLs for links in emails (only what flows actually use)
+frontend:
+  verify_email_url: https://app.2kvietnam.com/verify
+  password_reset_url: https://app.2kvietnam.com/reset-password
+
+# Email templates → sender mapping used by identity flows
+# Key name == template_key in notification module
+templates:
+  email_verification:
+    sender_key: trapmail_verify
+  
+  password_reset:
+    sender_key: trapmail_verify
+  
+  password_reset_confirmation:
+    sender_key: trapmail_verify
+  
+  welcome_email:
+    sender_key: trapmail_verify
+
+# SIGNUP FLOW
+flows:
+  signup:
+    enabled: true
+    steps:
+      - register_user              # core/identity
+      - send_verification_email    # core/notification
+    features:
+      email_verification:
+        enabled: true
+        token_expiry_hours: 24
+        resend_cooldown_minutes: 5
+      
+      auto_create_tenant:
+        enabled: true
+        plan_code: free
+        tenant_slug_pattern: '{email_prefix}-{uuid4_short}'
+      
+      assign_default_role:
+        enabled: true
+        role_slug: admin
+  
+  # SIGNIN FLOW
+  signin:
+    enabled: true
+    steps:
+      - authenticate           # core/identity
+      - create_session         # session management
+    features:
+      require_email_verified: true
+      failed_attempts_lockout: 5
+      lockout_duration_minutes: 30
+  
+  # PASSWORD RECOVERY FLOW
+  password_recovery:
+    enabled: true
+    steps:
+      - request_password_reset         # core/identity
+      - send_password_reset_email      # core/notification
+    features:
+      token_expiry_hours: 1
+      send_confirmation_email: true
+  
+  # CONFIRM PASSWORD RESET FLOW
+  password_reset_confirm:
+    enabled: true
+    steps:
+      - confirm_password_reset              # core/identity
+      - send_password_reset_confirmation    # core/notification
+  
+  # EMAIL VERIFICATION FLOW
+  verify_email:
+    enabled: true
+    steps:
+      - verify_email_token       # core/identity
+      - send_welcome_email       # core/notification (optional)
+    features:
+      send_welcome_email:
+        enabled: true
+  
+  # REQUEST VERIFICATION EMAIL (RESEND) FLOW
+  request_verification_email:
+    enabled: true
+    steps:
+      - send_verification_email    # core/notification
+
+# Password policy
+password_policy:
+  min_length: 8
+  max_length: 128
+  require_uppercase: true
+  require_lowercase: true
+  require_digit: true
+  require_special_char: false
+  forbidden_passwords:
+    - password
+    - '12345678'
+    - qwerty123

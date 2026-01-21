@@ -93,138 +93,83 @@ Application layer điều phối mọi luồng nghiệp vụ:
 
 ```
 application/
-├── api/                 # HTTP API endpoints (controller layer)
-│   ├── identity/        # Identity domain API
-│   │   ├── signup.py
-│   │   ├── signin.py
-│   │   ├── recover_password.py
-│   │   └── urls.py
-│   ├── provisioning/    # Provisioning domain API
-│   │   ├── create_tenant.py
-│   │   └── urls.py
-│   ├── business/        # Business domain API
-│   │   ├── create_product.py
-│   │   └── urls.py
-│   └── urls.py          # Main API router
-│
-├── flows/               # Flow orchestrator (multi-step sequence)
-│   ├── identity/
-│   │   ├── signup_flow.py
-│   │   ├── signin_flow.py
-│   │   └── password_recovery_flow.py
-│   ├── provisioning/
-│   │   └── tenant_onboarding_flow.py
-│   └── business/
-│       └── create_product_flow.py
-│
-├── dto/                 # Data Transfer Objects (Command, Context, Result)
-│   ├── identity.py      # SignupCommand, SignupContext, SignupResult
-│   ├── provisioning.py  # ProvisioningCommand, ProvisioningContext
-│   ├── business.py
+├── dto/                 # Command, Result, Context cho orchestrator
+│   ├── provisioning.py
 │   └── ...
-│
-├── contracts/           # Protocol/Interface definitions
-│   ├── identity.py      # SignupHandlerProtocol, SigninHandlerProtocol
-│   ├── provisioning.py  # TenantHandlerProtocol
-│   └── business.py
-│
-├── config/              # YAML config (flow metadata, documentation)
-│   ├── identity.yaml
-│   ├── provisioning.yaml
-│   └── business.yaml
-│
-├── services/            # Shared utilities for application layer
-│   ├── flow_context.py  # FlowContext manager
-│   ├── config_loader.py # Load YAML config
-│   └── flow_logger.py   # Flow execution logger
-│
-└── flow_rules/          # Toggle Boolean (DEPRECATED - use YAML config)
-    ├── domain/
-    ├── repositories/
-    ├── infrastructure/
-    └── services/
+├── use_cases/           # Hành động đơn lẻ (1-2 module calls)
+│   ├── signup.py
+│   ├── create_tenant.py
+│   └── ...
+├── orchestrators/       # Luồng nhiều bước (multi-step sequence)
+│   ├── provisioning.py
+│   └── ...
+├── flow_rules/          # Toggle Boolean cho runtime control
+│   ├── domain/
+│   ├── repositories/
+│   ├── infrastructure/
+│   └── services/
+└── interfaces/          # Adapter giao diện (HTTP, CLI, Celery)
+    ├── http/
+    │   ├── provisioning/
+    │   │   ├── serializers.py
+    │   │   ├── views.py
+    │   │   └── urls.py
+    │   └── ...
+    ├── cli/
+    ├── celery/
+    └── webhook/
 ```
 
 ## Quy Tắc Application Layer
 
 ### DTOs (`application/dto/`)
-- Định nghĩa command (input từ API), context (state xuyên suốt flow), result (output)
+- Định nghĩa command (input) và result (output) cho orchestrator
 - Không chứa logic domain
 - Module KHÔNG BAO GIỜ dùng application DTO
-- Ví dụ: `SignupCommand`, `SignupContext`, `SignupResult`, `ProvisioningContext`
+- Ví dụ: `SignupCommand`, `SignupResult`, `ProvisioningContext`
 
-### API Endpoints (`application/api/`)
-- HTTP endpoints (DRF views + serializers)
-- Vai trò: Validate request → gọi flow → format JSON response
-- Cấu trúc: `api/<domain>/<endpoint_name>.py` (e.g., `api/identity/signup.py`)
-- Quy tắc: Không chứa logic domain, chỉ validate → flow → JSON
-- Response chuẩn: `{"success": bool, "data": {}, "error": null, "message": str}`
+### Use Cases (`application/use_cases/`)
+- Hành động đơn lẻ: nhận command → gọi 1-2 module service → trả result
+- KHÔNG quản lý context dài (orchestrator làm việc đó)
+- Ví dụ: `SignupUseCase`, `CreateTenantUseCase`
 
-### Flow Orchestrators (`application/flows/`)
-- Ghép nhiều module service thành sequence cố định (multi-step sequence)
+### Orchestrators (`application/orchestrators/`)
+- Ghép nhiều use case thành sequence cố định
 - Quản lý context xuyên suốt các bước
-- Kiểm tra handler trước khi thực thi bước (skip if handler not injected)
-- Ví dụ: `SignupFlow` (3 bước), `TenantOnboardingFlow` (8 bước)
+- Kiểm tra toggle trước khi thực thi bước
+- Ví dụ: `ProvisioningFlowOrchestrator` (8 bước từ signup → activate)
 
 ```python
-class SignupFlow:
-    def __init__(self, signup_handler=None):
-        self.signup_handler = signup_handler or get_signup_service()
-    
-    def execute(self, command: SignupCommand) -> SignupContext:
-        context = SignupContext()
+class ProvisioningFlowOrchestrator:
+    def run(self, command: SignupCommand) -> ProvisioningContext:
+        context = ProvisioningContext()
         
-        # Step 1: Create user
-        user = self.signup_handler.create_user(...)
-        context.user_id = user.id
+        if self._is_enabled('provisioning', 'signup'):
+            result = self._execute_signup_step(command)
+            context.user_id = result.user_id
         
-        # Step 2: Send verification email
-        token = self.signup_handler.send_verification_email(user.email)
-        context.verification_token = token
+        if self._is_enabled('provisioning', 'verify_email'):
+            result = self._execute_verify_email_step(context)
+        
+        # ... các bước khác
         
         return context
 ```
 
-### Contracts (`application/contracts/`)
-- Protocol definitions (typing.Protocol) cho flow handler
-- Decouple flow khỏi implementation cụ thể (easy to mock)
-- Ví dụ: `SignupHandlerProtocol`, `EmailHandlerProtocol`
-
-```python
-class SignupHandlerProtocol(Protocol):
-    def check_email_unique(self, email: str) -> bool: ...
-    def create_user(self, email: str, password: str) -> User: ...
-    def send_verification_email(self, user_id: str, email: str) -> str: ...
-```
-
-### Config (`application/config/`)
-- YAML metadata cho flow (description, steps, owner)
-- Dùng cho documentation, không affect runtime behavior
-- Ví dụ: `identity.yaml`, `provisioning.yaml`, `business.yaml`
-
-```yaml
-flow_code: "identity"
-description: "User signup flow"
-
-steps:
-  - code: "create_user"
-    description: "Create new user account"
-    required: true
-  
-  - code: "send_verification_email"
-    description: "Send email verification link"
-    required: false
-```
-
-### Services (`application/services/`)
-- Shared utilities: `flow_context.py`, `config_loader.py`, `flow_logger.py`
-- FlowContext manager: Giữ state xuyên suốt flow execution
-- Không chứa logic domain, chỉ hỗ trợ flow execution
-
 ### Flow Rules (`application/flow_rules/`)
-- ⚠️ **DEPRECATED** - dùng YAML config trong `application/config/` thay vào
-- Cách cũ: Boolean toggle (flow_code + step_code → is_enabled)
-- Cách mới: YAML metadata cho documentation
+- Lưu Boolean toggle: flow_code + step_code → is_enabled
+- Admin có thể bật/tắt từng bước qua Django Admin
+- Orchestrator CHỈ ĐỌC toggle, không sửa
+- Nếu toggle = False → bỏ qua bước nhưng giữ context
+
+### Interfaces (`application/interfaces/`)
+- Adapter dịch input external → DTO application
+- Gọi use case/orchestrator → định dạng output
+
+Quy tắc Interface:
+- Không chứa logic kinh doanh
+- Chỉ validate, transform, route
+- HTTP adapter: serializer → DTO → orchestrator → JSON
 
 ================================================================
 HAI LUỒNG TRUY CẬP
@@ -455,10 +400,7 @@ KHI ĐƯỢC YÊU CẦU
 → Xây dựng full skeleton theo cấu trúc trên (domain → repository → infrastructure → service → provider)
 
 ### "Thêm API"
-→ Tạo DTO + flow + API endpoint trong `application/api/` (KHÔNG tạo endpoint trong module)
-
-### "Thêm flow"
-→ Tạo DTO + contracts + flow + API endpoint + YAML config (step by step)
+→ Tạo DTO + use case/orchestrator + HTTP adapter trong `application/interfaces/http/`
 
 ### "Refactor"
 → Kiểm tra vi phạm dependency rules, tách logic ra đúng layer
@@ -467,7 +409,7 @@ KHI ĐƯỢC YÊU CẦU
 → Chỉ ra vi phạm kiến trúc và đề xuất fix cụ thể
 
 ### "Thêm feature"
-→ Xác định layer (module service vs application flow), implement theo dependency rules
+→ Xác định layer (module service vs application orchestrator), implement theo dependency rules
 
 ================================================================
 CHECKLIST TRƯỚC KHI COMMIT
@@ -478,12 +420,11 @@ CHECKLIST TRƯỚC KHI COMMIT
 - [ ] Domain không import Django/DRF
 - [ ] Service trả domain entity/DTO, không trả ORM model
 - [ ] Admin adapter gọi service, không thao tác ORM trực tiếp
-- [ ] **API endpoint nằm trong `application/api/<domain>/`, KHÔNG trong module**
+- [ ] HTTP adapter nằm trong `application/interfaces/http/`
 - [ ] DTO nằm trong `application/dto/`, không trong module
-- [ ] Flow nằm trong `application/flows/<domain>/`
-- [ ] Contract/Protocol nằm trong `application/contracts/`
-- [ ] YAML config nằm trong `application/config/`
+- [ ] Orchestrator kiểm tra toggle trước mỗi bước
 - [ ] Test coverage đầy đủ (domain → service → integration)
+- [ ] Docstring đầy đủ cho public API
 
 ================================================================
 VIOLATION EXAMPLES & FIXES
@@ -536,20 +477,7 @@ def get_user(self, user_id: str) -> User:  # ĐÚNG!
 
 ✅ ĐÚNG: API trong application
 ```python
-# application/api/identity/signup.py  # ĐÚNG!
-```
-
-### ❌ SAI: Orchestrator gọi trực tiếp ORM
-```python
-# application/orchestrators/provisioning.py
-user = User.objects.get(id=user_id)  # SAI!
-```
-
-✅ ĐÚNG: Orchestrator gọi service
-```python
-# application/flows/provisioning/tenant_onboarding_flow.py
-service = get_identity_service()
-user = service.get_user_by_id(user_id)  # ĐÚNG!
+# application/interfaces/http/auth/views.py  # ĐÚNG!
 ```
 
 ================================================================
