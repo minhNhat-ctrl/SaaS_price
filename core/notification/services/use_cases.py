@@ -1,6 +1,7 @@
 """Notification service (application use cases)."""
 from datetime import datetime
 from typing import Optional
+from uuid import uuid4
 
 from ..domain.entities import NotificationSender, NotificationTemplate, NotificationLog
 from ..domain.exceptions import (
@@ -71,18 +72,19 @@ class NotificationService:
         
         # 3. Create log entry (start)
         log = NotificationLog(
+            id=uuid4(),
             template_key=command.template_key,
             channel=command.channel,
             recipient=command.recipient,
             status=SendStatus.PENDING,
-            context=command.context,
+            context=command.context or {},
             sender_key=sender.sender_key,
+            created_at=datetime.now(),
         )
         
         # 4. Render template
         try:
-            rendered_subject = template.render({'subject': template.subject}, command.context)
-            rendered_body = template.render({'body': template.body}, command.context)
+            rendered_subject, rendered_body = template.render(command.context)
         except Exception as e:
             log.status = SendStatus.FAILED
             log.error_message = f"Template rendering failed: {str(e)}"
@@ -115,7 +117,9 @@ class NotificationService:
         # 7. Raise if send failed
         if saved_log.status == SendStatus.FAILED:
             raise NotificationSendError(
-                f"Failed to send {command.channel.value} to {command.recipient}: {saved_log.error_message}"
+                channel=command.channel.value,
+                recipient=command.recipient,
+                reason=saved_log.error_message
             )
         
         return saved_log
@@ -140,16 +144,12 @@ class NotificationService:
         context: dict,
     ) -> Optional[str]:
         """
-        Send via configured provider.
+        Send via configured provider using adapter registry.
         
-        Routes to appropriate adapter based on sender.provider and channel:
-        - SendGridAdapter for EMAIL/sendgrid
-        - TwilioAdapter for SMS/twilio
-        - FirebaseAdapter for PUSH/firebase
-        - WebhookAdapter for WEBHOOK
+        Delegates to appropriate adapter based on sender.sender_key (config-driven).
         
         Args:
-            sender: Configured sender entity
+            sender: Configured sender entity with sender_key
             recipient: Email/phone/token/URL
             subject: Email subject or message title
             body: Email body or message content
@@ -159,168 +159,24 @@ class NotificationService:
             Provider's message ID (external reference)
         
         Raises:
+            SenderNotFoundError: If sender_key not registered
             NotificationSendError: If sending fails
         """
+        from core.notification.infrastructure.adapters import get_adapter
         
-        # Route based on channel + provider
-        if sender.channel.value == "email":
-            if sender.provider == "sendgrid":
-                return self._send_via_sendgrid(sender, recipient, subject, body, context)
-            elif sender.provider == "smtp":
-                return self._send_via_smtp(sender, recipient, subject, body, context)
-            else:
-                raise NotificationSendError(f"Unknown email provider: {sender.provider}")
+        # Get adapter for this sender_key from registry
+        # If not found, raises SenderNotFoundError with helpful message
+        adapter = get_adapter(sender.sender_key)
         
-        elif sender.channel.value == "sms":
-            if sender.provider == "twilio":
-                return self._send_via_twilio(sender, recipient, body, context)
-            else:
-                raise NotificationSendError(f"Unknown SMS provider: {sender.provider}")
-        
-        elif sender.channel.value == "push":
-            if sender.provider == "firebase":
-                return self._send_via_firebase(sender, recipient, subject, body, context)
-            else:
-                raise NotificationSendError(f"Unknown PUSH provider: {sender.provider}")
-        
-        elif sender.channel.value == "webhook":
-            return self._send_via_webhook(sender, recipient, subject, body, context)
-        
-        else:
-            raise NotificationSendError(f"Unknown channel: {sender.channel.value}")
-    
-    # ============================================================
-    # Provider Adapters (Placeholder Implementations)
-    # ============================================================
-    
-    def _send_via_sendgrid(
-        self,
-        sender: NotificationSender,
-        recipient: str,
-        subject: str,
-        body: str,
-        context: dict,
-    ) -> str:
-        """Send via SendGrid API."""
-        # TODO: Implement SendGrid adapter
-        # import sendgrid
-        # sg = sendgrid.SendGridAPIClient(sender.api_key)
-        # message = Mail(
-        #     from_email=sender.from_email,
-        #     to_emails=recipient,
-        #     subject=subject,
-        #     html_content=body,
-        # )
-        # response = sg.send(message)
-        # return response.headers.get('X-Message-Id')
-        
-        import uuid
-        return str(uuid.uuid4())
-    
-    def _send_via_smtp(
-        self,
-        sender: NotificationSender,
-        recipient: str,
-        subject: str,
-        body: str,
-        context: dict,
-    ) -> str:
-        """Send via SMTP."""
-        # TODO: Implement SMTP adapter
-        # import smtplib
-        # from email.mime.text import MIMEText
-        # msg = MIMEText(body)
-        # msg['Subject'] = subject
-        # msg['From'] = sender.from_email
-        # msg['To'] = recipient
-        # server = smtplib.SMTP(sender.smtp_host, sender.smtp_port)
-        # server.send_message(msg)
-        # server.quit()
-        
-        import uuid
-        return str(uuid.uuid4())
-    
-    def _send_via_twilio(
-        self,
-        sender: NotificationSender,
-        recipient: str,
-        body: str,
-        context: dict,
-    ) -> str:
-        """Send SMS via Twilio."""
-        # TODO: Implement Twilio adapter
-        # from twilio.rest import Client
-        # client = Client(sender.account_sid, sender.auth_token)
-        # message = client.messages.create(
-        #     from_=sender.phone_number,
-        #     to=recipient,
-        #     body=body,
-        # )
-        # return message.sid
-        
-        import uuid
-        return str(uuid.uuid4())
-    
-    def _send_via_firebase(
-        self,
-        sender: NotificationSender,
-        recipient: str,
-        subject: str,
-        body: str,
-        context: dict,
-    ) -> str:
-        """Send push notification via Firebase."""
-        # TODO: Implement Firebase adapter
-        # import firebase_admin
-        # from firebase_admin import messaging
-        # message = messaging.Message(
-        #     notification=messaging.Notification(
-        #         title=subject,
-        #         body=body,
-        #     ),
-        #     token=recipient,
-        # )
-        # response = messaging.send(message)
-        # return response
-        
-        import uuid
-        return str(uuid.uuid4())
-    
-    def _send_via_webhook(
-        self,
-        sender: NotificationSender,
-        recipient: str,
-        subject: str,
-        body: str,
-        context: dict,
-    ) -> str:
-        """Send via webhook (HTTP POST)."""
-        # TODO: Implement webhook adapter
-        # import requests
-        # payload = {
-        #     "recipient": recipient,
-        #     "subject": subject,
-        #     "body": body,
-        #     "context": context,
-        # }
-        # response = requests.post(recipient, json=payload, timeout=5)
-        # return response.json().get('message_id')
-        
-        import uuid
-        return str(uuid.uuid4())
-    
-    def get_sender(self, sender_key: str) -> Optional[NotificationSender]:
-        """Get sender by key."""
-        return self.sender_repo.get_by_key(sender_key)
-    
-    def get_template(self, template_key: str, channel, language: str = 'en') -> Optional[NotificationTemplate]:
-        """Get template by key, channel, language."""
-        return self.template_repo.get_or_default_language(template_key, channel, language)
-    
-    def get_send_log(self, template_key: str, limit: int = 50):
-        """Get recent send logs for template."""
-
-        return self.log_repo.list_by_template_key(template_key, limit)
+        # Delegate send to adapter
+        return adapter.send(
+            sender=sender,
+            recipient=recipient,
+            subject=subject,
+            body=body,
+            channel=sender.channel,
+            context=context,
+        )
     
     # ============================================================
     # Convenience Methods for Common Email Types

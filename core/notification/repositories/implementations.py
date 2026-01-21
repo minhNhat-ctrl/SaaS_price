@@ -1,6 +1,6 @@
 """Django ORM implementations of notification repositories."""
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from ..domain.entities import NotificationSender, NotificationTemplate, NotificationLog
 from ..domain.value_objects import Channel
@@ -39,7 +39,7 @@ class DjangoNotificationSenderRepository(NotificationSenderRepository):
         """Get default active sender for channel."""
         # First try to get default
         model = NotificationSenderModel.objects.filter(
-            channel=channel.value,
+            channel=channel.value.upper(),
             is_active=True,
             is_default=True
         ).first()
@@ -47,7 +47,7 @@ class DjangoNotificationSenderRepository(NotificationSenderRepository):
         # If no default, get any active
         if not model:
             model = NotificationSenderModel.objects.filter(
-                channel=channel.value,
+                channel=channel.value.upper(),
                 is_active=True
             ).first()
         
@@ -56,7 +56,7 @@ class DjangoNotificationSenderRepository(NotificationSenderRepository):
     def list_by_channel(self, channel: Channel) -> List[NotificationSender]:
         """List all senders for channel."""
         models = NotificationSenderModel.objects.filter(
-            channel=channel.value,
+            channel=channel.value.upper(),
             is_active=True
         ).order_by('-is_default', 'created_at')
         
@@ -68,7 +68,7 @@ class DjangoNotificationSenderRepository(NotificationSenderRepository):
             id=sender.id,
             defaults={
                 'sender_key': sender.sender_key,
-                'channel': sender.channel.value,
+                'channel': sender.channel.value.upper(),
                 'provider': sender.provider,
                 'from_email': sender.from_email,
                 'from_name': sender.from_name,
@@ -81,16 +81,35 @@ class DjangoNotificationSenderRepository(NotificationSenderRepository):
     
     @staticmethod
     def _to_entity(model: NotificationSenderModel) -> NotificationSender:
-        """Convert model to domain entity."""
+        """
+        Convert model to domain entity.
+        
+        Builds credentials dict from both credentials_json AND individual SMTP fields
+        (backwards compatibility - some senders store config in separate fields).
+        """
+        # Start with credentials_json
+        credentials = model.credentials_json or {}
+        
+        # Merge in SMTP fields if they exist (take precedence over credentials_json)
+        if model.smtp_host:
+            credentials['smtp_host'] = model.smtp_host
+        if model.smtp_port:
+            credentials['smtp_port'] = model.smtp_port
+        if model.smtp_username:
+            credentials['smtp_username'] = model.smtp_username
+        if model.smtp_password:
+            credentials['smtp_password'] = model.smtp_password
+        
         return NotificationSender(
             id=model.id,
             sender_key=model.sender_key,
-            channel=Channel(model.channel),
+            channel=Channel(model.channel.lower()),
             provider=model.provider,
             from_email=model.from_email,
             from_name=model.from_name,
-            credentials=model.credentials_json,
+            credentials=credentials,  # Now includes SMTP fields!
             is_active=model.is_active,
+            is_default=model.is_default,
         )
 
 
@@ -102,7 +121,7 @@ class DjangoNotificationTemplateRepository(NotificationTemplateRepository):
         try:
             model = NotificationTemplateModel.objects.get(
                 template_key=template_key,
-                channel=channel.value,
+                channel=channel.value.upper(),
                 language=language
             )
             return self._to_entity(model)
@@ -114,7 +133,7 @@ class DjangoNotificationTemplateRepository(NotificationTemplateRepository):
         # Try exact match
         model = NotificationTemplateModel.objects.filter(
             template_key=template_key,
-            channel=channel.value,
+            channel=channel.value.upper(),
             language=language
         ).first()
         
@@ -122,7 +141,7 @@ class DjangoNotificationTemplateRepository(NotificationTemplateRepository):
         if not model:
             model = NotificationTemplateModel.objects.filter(
                 template_key=template_key,
-                channel=channel.value,
+                channel=channel.value.upper(),
                 language='en'
             ).first()
         
@@ -140,7 +159,7 @@ class DjangoNotificationTemplateRepository(NotificationTemplateRepository):
     def list_by_channel(self, channel: Channel) -> List[NotificationTemplate]:
         """List all templates for channel."""
         models = NotificationTemplateModel.objects.filter(
-            channel=channel.value,
+            channel=channel.value.upper(),
             is_active=True
         ).order_by('template_key', 'language')
         
@@ -152,7 +171,7 @@ class DjangoNotificationTemplateRepository(NotificationTemplateRepository):
             id=template.id,
             defaults={
                 'template_key': template.template_key,
-                'channel': template.channel.value,
+                'channel': template.channel.value.upper(),
                 'language': template.language,
                 'subject': template.subject,
                 'body': template.body,
@@ -172,7 +191,7 @@ class DjangoNotificationTemplateRepository(NotificationTemplateRepository):
         return NotificationTemplate(
             id=model.id,
             template_key=model.template_key,
-            channel=Channel(model.channel),
+            channel=Channel(model.channel.lower()),
             language=model.language,
             subject=model.subject,
             body=model.body,
@@ -185,18 +204,20 @@ class DjangoNotificationLogRepository(NotificationLogRepository):
     
     def save(self, log: NotificationLog) -> NotificationLog:
         """Save send log."""
+        log_id = log.id or uuid4()
         model = NotificationLogModel.objects.create(
-            id=log.id,
+            id=log_id,
             template_key=log.template_key,
-            channel=log.channel.value,
+            channel=log.channel.value.upper(),
             recipient=log.recipient,
             status=log.status.value,
             error_message=log.error_message or '',
             external_id=log.external_id,
-            context_snapshot=log.context,
+            context_snapshot=log.context or {},
             sender_key=log.sender_key,
             sent_at=log.sent_at,
         )
+        log.id = log_id
         return self._to_entity(model)
     
     def get_by_id(self, log_id: UUID) -> Optional[NotificationLog]:
@@ -223,7 +244,7 @@ class DjangoNotificationLogRepository(NotificationLogRepository):
         return NotificationLog(
             id=model.id,
             template_key=model.template_key,
-            channel=Channel(model.channel),
+            channel=Channel(model.channel.lower()),
             recipient=model.recipient,
             status=SendStatus(model.status),
             error_message=model.error_message,

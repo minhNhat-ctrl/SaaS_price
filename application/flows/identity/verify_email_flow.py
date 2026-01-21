@@ -6,6 +6,7 @@ Multi-step flow:
 2. Send welcome email (core/notification, optional)
 """
 import logging
+from asgiref.sync import sync_to_async
 
 from application.dto.identity import (
     VerifyEmailCommand,
@@ -98,12 +99,9 @@ class VerifyEmailFlow:
         Raises:
             Exception from identity service (invalid token, etc.)
         """
-        from core.identity.dto.contracts import VerifyEmailCommand as IdentityVerifyEmailCommand
-        
-        verify_cmd = IdentityVerifyEmailCommand(token=command.token)
-        result = await self.identity_service.verify_email(verify_cmd)
-        
-        return result.user  # Assuming result has user attribute
+        # IdentityService.verify_email_token signature: (token: str) -> UserIdentity
+        user = await self.identity_service.verify_email_token(command.token)
+        return user
     
     async def _send_welcome_email_step(self, user, context: VerifyEmailContext):
         """
@@ -115,23 +113,29 @@ class VerifyEmailFlow:
         """
         from core.notification.dto.contracts import WelcomeEmailCommand
         
+        welcome_cfg = self.config["templates"].get("welcome_email", {})
         welcome_cmd = WelcomeEmailCommand(
             recipient_email=user.email,
             recipient_name=getattr(user, "first_name", None),
-            language="en",
-            sender_key=self.config["templates"]["welcome_email"].get("sender_key"),
+            language=welcome_cfg.get("language", "en"),
+            sender_key=welcome_cfg.get("sender_key"),
+            template_key=welcome_cfg.get("template_key", "welcome_email"),
         )
         
-        log = await self.notification_service.send_from_dto(
-            welcome_cmd.to_send_notification_command()
-        )
-        
-        if log.status.value != "SENT":
-            logger.warning(f"[Verify Email Flow] Welcome email send failed: {log.error_message}")
-            context.errors["welcome_email_failed"] = log.error_message
-        else:
-            logger.info(f"[Verify Email Flow] Welcome email sent to {user.email}")
-            context.welcome_email_sent = True
+        try:
+            log = await sync_to_async(self.notification_service.send_from_dto)(
+                welcome_cmd.to_send_notification_command()
+            )
+            
+            if log.status.value != "SENT":
+                logger.warning(f"[Verify Email Flow] Welcome email send failed: {log.error_message}")
+                context.errors["welcome_email_failed"] = log.error_message
+            else:
+                logger.info(f"[Verify Email Flow] Welcome email sent to {user.email}")
+                context.welcome_email_sent = True
+        except Exception as exc:
+            logger.warning(f"[Verify Email Flow] Welcome email send exception: {exc}")
+            context.errors["welcome_email_failed"] = str(exc)
     
     def _should_send_welcome_email(self) -> bool:
         """Check if welcome email should be sent."""

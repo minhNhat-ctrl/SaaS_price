@@ -55,17 +55,16 @@ class SigninFlow:
         try:
             # Step 1: Authenticate user
             logger.info(f"[Signin Flow] Step 1: Authenticating user {command.email}")
-            user = await self._authenticate_step(command, context)
-            context.identity_id = user.id
+            auth_token, identity = await self._authenticate_step(command, context)
             
-            # Step 2: Create session token
+            # Step 2: Create session token (use issued token)
             logger.info(f"[Signin Flow] Step 2: Creating session token")
-            session_token = await self._create_session_step(user, context)
-            context.mark_authenticated(user.id, session_token)
+            session_token = await self._create_session_step(auth_token, identity)
+            context.mark_authenticated(identity.id, session_token)
             
             return SigninResult(
                 success=True,
-                identity_id=user.id,
+                identity_id=identity.id,
                 session_token=session_token,
                 message="Signin successful",
             )
@@ -83,46 +82,31 @@ class SigninFlow:
         """
         Step 1: Authenticate user.
         
-        Args:
-            command: SigninCommand
-            context: SigninContext to update
-        
-        Returns:
-            User entity from identity service
-        
-        Raises:
-            Exception from identity service (invalid credentials, etc.)
+        Uses core.identity IdentityService.authenticate(email, password) which returns an AuthToken
+        (token, user_id). Fetch identity separately to inspect verification state.
         """
-        from core.identity.dto.contracts import AuthenticationCommand
-        
-        auth_cmd = AuthenticationCommand(
-            email=command.email,
-            password=command.password,
-        )
-        
-        user = await self.identity_service.authenticate(auth_cmd)
-        
-        # Check if email verification is required
-        if self._is_email_verification_required() and not user.email_verified:
+        # IdentityService.authenticate signature: (email: str, password: str) -> AuthToken
+        auth_token = await self.identity_service.authenticate(command.email, command.password)
+
+        identity = await self.identity_service.get_identity_by_email(command.email)
+        if not identity:
+            raise ValueError("Identity not found after authentication")
+
+        if self._is_email_verification_required() and not identity.email_verified:
             raise ValueError("Email verification required. Please verify your email first.")
-        
-        return user
+
+        context.identity_id = identity.id
+        return auth_token, identity
     
-    async def _create_session_step(self, user, context: SigninContext) -> str:
+    async def _create_session_step(self, auth_token, identity) -> str:
         """
         Step 2: Create session token.
         
-        Args:
-            user: User entity
-            context: SigninContext to update
-        
-        Returns:
-            Session token (JWT or opaque token)
+        Currently IdentityService.authenticate already issues a token via repository.issue_token,
+        returning AuthToken. Use that token directly; fallback to string if repository returns plain str.
         """
-        # TODO: Implement session token creation
-        # For now, return a placeholder
-        import uuid
-        return str(uuid.uuid4())
+        token_value = getattr(auth_token, "token", None) or auth_token
+        return str(token_value)
     
     def _is_email_verification_required(self) -> bool:
         """Check if email verification is required for signin."""

@@ -12,6 +12,8 @@ from application.dto.identity import (
     PasswordRecoveryContext,
     PasswordRecoveryResult,
 )
+from asgiref.sync import sync_to_async
+
 from core.identity.services.providers import get_identity_service
 from core.notification.services.providers import get_notification_service
 
@@ -58,12 +60,12 @@ class PasswordRecoveryFlow:
         try:
             # Step 1: Request password reset token
             logger.info(f"[Password Recovery Flow] Step 1: Requesting reset token for {command.email}")
-            result = await self._request_password_reset_step(command, context)
-            context.mark_reset_requested(result.reset_token)
+            reset_token = await self._request_password_reset_step(command, context)
+            context.mark_reset_requested(reset_token)
             
             # Step 2: Send password reset email
             logger.info(f"[Password Recovery Flow] Step 2: Sending reset email")
-            await self._send_password_reset_email_step(command, result, context)
+            await self._send_password_reset_email_step(command, reset_token, context)
             
             return PasswordRecoveryResult(
                 success=True,
@@ -96,14 +98,11 @@ class PasswordRecoveryFlow:
         Raises:
             Exception from identity service
         """
-        from core.identity.dto.contracts import PasswordResetRequestCommand
-        
-        request_cmd = PasswordResetRequestCommand(email=command.email)
-        result = await self.identity_service.request_password_reset(request_cmd)
-        
-        return result
+        # IdentityService.request_password_reset signature: (email: str) -> token str
+        token = await self.identity_service.request_password_reset(command.email)
+        return token
     
-    async def _send_password_reset_email_step(self, command: PasswordRecoveryCommand, reset_result, context: PasswordRecoveryContext):
+    async def _send_password_reset_email_step(self, command: PasswordRecoveryCommand, reset_token: str, context: PasswordRecoveryContext):
         """
         Step 2: Send password reset email.
         
@@ -122,18 +121,23 @@ class PasswordRecoveryFlow:
         
         reset_cmd = PasswordResetEmailCommand(
             recipient_email=command.email,
-            reset_token=reset_result.reset_token,
-            reset_url=f"{frontend_url}?token={reset_result.reset_token}",
+            reset_token=reset_token,
+            reset_url=f"{frontend_url}?token={reset_token}",
             language="en",
             sender_key=self.config["templates"]["password_reset"].get("sender_key"),
+            template_key=self.config["templates"]["password_reset"].get("template_key", "password_reset"),
         )
         
-        log = await self.notification_service.send_from_dto(
-            reset_cmd.to_send_notification_command()
-        )
-        
-        if log.status.value != "SENT":
-            logger.warning(f"[Password Recovery Flow] Reset email send failed: {log.error_message}")
-            context.errors["reset_email_failed"] = log.error_message
-        else:
-            logger.info(f"[Password Recovery Flow] Reset email sent to {command.email}")
+        try:
+            log = await sync_to_async(self.notification_service.send_from_dto)(
+                reset_cmd.to_send_notification_command()
+            )
+            
+            if log.status.value != "SENT":
+                logger.warning(f"[Password Recovery Flow] Reset email send failed: {log.error_message}")
+                context.errors["reset_email_failed"] = log.error_message
+            else:
+                logger.info(f"[Password Recovery Flow] Reset email sent to {command.email}")
+        except Exception as exc:
+            logger.warning(f"[Password Recovery Flow] Reset email send exception: {exc}")
+            context.errors["reset_email_failed"] = str(exc)

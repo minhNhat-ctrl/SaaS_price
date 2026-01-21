@@ -16,7 +16,7 @@ from uuid import UUID
 # SIGNUP FLOW DTOs
 # ============================================================
 
-@dataclass(slots=True)
+@dataclass
 class SignupCommand:
     """Input to signup flow."""
     email: str
@@ -26,7 +26,7 @@ class SignupCommand:
     last_name: Optional[str] = None
 
 
-@dataclass(slots=True)
+@dataclass
 class SignupContext:
     """State maintained across signup flow steps."""
     email: str
@@ -48,7 +48,7 @@ class SignupContext:
         self.verification_sent = True
 
 
-@dataclass(slots=True)
+@dataclass
 class SignupResult:
     """Output from signup flow."""
     success: bool
@@ -63,14 +63,14 @@ class SignupResult:
 # SIGNIN FLOW DTOs
 # ============================================================
 
-@dataclass(slots=True)
+@dataclass
 class SigninCommand:
     """Input to signin flow."""
     email: str
     password: str
 
 
-@dataclass(slots=True)
+@dataclass
 class SigninContext:
     """State maintained across signin flow steps."""
     email: str
@@ -86,7 +86,7 @@ class SigninContext:
         self.session_token = session_token
 
 
-@dataclass(slots=True)
+@dataclass
 class SigninResult:
     """Output from signin flow."""
     success: bool
@@ -100,13 +100,13 @@ class SigninResult:
 # PASSWORD RECOVERY FLOW DTOs
 # ============================================================
 
-@dataclass(slots=True)
+@dataclass
 class PasswordRecoveryCommand:
     """Input to password recovery flow."""
     email: str
 
 
-@dataclass(slots=True)
+@dataclass
 class PasswordRecoveryContext:
     """State maintained across password recovery flow steps."""
     email: str
@@ -126,7 +126,7 @@ class PasswordRecoveryContext:
         self.reset_confirmed = True
 
 
-@dataclass(slots=True)
+@dataclass
 class PasswordRecoveryResult:
     """Output from password recovery flow."""
     success: bool
@@ -140,7 +140,7 @@ class PasswordRecoveryResult:
 # CONFIRM PASSWORD RESET FLOW DTOs
 # ============================================================
 
-@dataclass(slots=True)
+@dataclass
 class PasswordResetConfirmCommand:
     """Input to password reset confirmation flow."""
     token: str
@@ -148,7 +148,7 @@ class PasswordResetConfirmCommand:
     new_password_confirm: str
 
 
-@dataclass(slots=True)
+@dataclass
 class PasswordResetConfirmContext:
     """State maintained across password reset confirmation flow steps."""
     token: str
@@ -165,7 +165,7 @@ class PasswordResetConfirmContext:
         self.reset_confirmed = True
 
 
-@dataclass(slots=True)
+@dataclass
 class PasswordResetConfirmResult:
     """Output from password reset confirmation flow."""
     success: bool
@@ -180,13 +180,13 @@ class PasswordResetConfirmResult:
 # EMAIL VERIFICATION FLOW DTOs
 # ============================================================
 
-@dataclass(slots=True)
+@dataclass
 class VerifyEmailCommand:
     """Input to email verification flow."""
     token: str
 
 
-@dataclass(slots=True)
+@dataclass
 class VerifyEmailContext:
     """State maintained across email verification flow steps."""
     token: str
@@ -203,7 +203,7 @@ class VerifyEmailContext:
         self.email_verified = True
 
 
-@dataclass(slots=True)
+@dataclass
 class VerifyEmailResult:
     """Output from email verification flow."""
     success: bool
@@ -219,13 +219,13 @@ class VerifyEmailResult:
 # REQUEST EMAIL VERIFICATION FLOW DTOs
 # ============================================================
 
-@dataclass(slots=True)
+@dataclass
 class RequestVerificationEmailCommand:
     """Input to resend verification email flow."""
     email: str
 
 
-@dataclass(slots=True)
+@dataclass
 class RequestVerificationEmailContext:
     """State maintained across resend verification email flow steps."""
     email: str
@@ -239,7 +239,7 @@ class RequestVerificationEmailContext:
         self.verification_email_sent = True
 
 
-@dataclass(slots=True)
+@dataclass
 class RequestVerificationEmailResult:
     """Output from resend verification email flow."""
     success: bool
@@ -269,7 +269,6 @@ __all__ = [
     "RequestVerificationEmailContext",
     "RequestVerificationEmailResult",
 ]
-    session_id: str
 
 
 @dataclass(frozen=True)

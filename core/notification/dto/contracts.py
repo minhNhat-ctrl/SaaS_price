@@ -201,11 +201,12 @@ class VerificationEmailCommand:
     verification_url: str
     language: str = "en"
     sender_key: Optional[str] = None  # If None, use default
+    template_key: str = "email_verification"
     
     def to_send_notification_command(self) -> SendNotificationCommand:
         """Convert to generic SendNotificationCommand."""
         return SendNotificationCommand(
-            template_key="email_verification",
+            template_key=self.template_key,
             channel=Channel.EMAIL,
             recipient=self.recipient_email,
             language=self.language,
@@ -227,11 +228,12 @@ class PasswordResetEmailCommand:
     reset_url: str
     language: str = "en"
     sender_key: Optional[str] = None
+    template_key: str = "password_reset"
     
     def to_send_notification_command(self) -> SendNotificationCommand:
         """Convert to generic SendNotificationCommand."""
         return SendNotificationCommand(
-            template_key="password_reset",
+            template_key=self.template_key,
             channel=Channel.EMAIL,
             recipient=self.recipient_email,
             language=self.language,
@@ -252,11 +254,12 @@ class WelcomeEmailCommand:
     recipient_name: Optional[str] = None
     language: str = "en"
     sender_key: Optional[str] = None
+    template_key: str = "welcome_email"
     
     def to_send_notification_command(self) -> SendNotificationCommand:
         """Convert to generic SendNotificationCommand."""
         return SendNotificationCommand(
-            template_key="welcome_email",
+            template_key=self.template_key,
             channel=Channel.EMAIL,
             recipient=self.recipient_email,
             language=self.language,

@@ -10,6 +10,7 @@ Multi-step flow:
 import logging
 from typing import Optional
 from uuid import uuid4
+from asgiref.sync import sync_to_async
 
 from application.dto.identity import (
     SignupCommand,
@@ -50,6 +51,9 @@ class SignupFlow:
         self.config = config
         self.identity_service = identity_service or get_identity_service()
         self.notification_service = notification_service or get_notification_service()
+        logger.info(f"[Signup Flow] Initialized with config keys: {list(config.keys())}")
+        logger.info(f"[Signup Flow] Flows config: {config.get('flows', {})}")
+        logger.info(f"[Signup Flow] Templates config: {config.get('templates', {})}")
     
     async def execute(self, command: SignupCommand) -> SignupResult:
         """
@@ -118,15 +122,13 @@ class SignupFlow:
         """
         from core.identity.dto.contracts import RegisterIdentityCommand
         
-        register_cmd = RegisterIdentityCommand(
+        # Identity service register_user() signature: (email, password, email_verified)
+        # No need for password_confirm (already validated at API layer)
+        user = await self.identity_service.register_user(
             email=command.email,
             password=command.password,
-            password_confirm=command.password_confirm,
-            first_name=command.first_name,
-            last_name=command.last_name,
+            email_verified=False,
         )
-        
-        user = await self.identity_service.register_user(register_cmd)
         return user
     
     async def _send_verification_email_step(self, user, context: SignupContext):
@@ -137,11 +139,13 @@ class SignupFlow:
             user: User entity from identity service
             context: SignupContext to update
         """
-        from core.identity.dto.contracts import RegisterIdentityCommand
         from core.notification.dto.contracts import VerificationEmailCommand
         
-        # Request verification token from identity service
-        token = await self.identity_service.request_email_verification(user.id, user.email)
+        logger.info(f"[Signup Flow] Starting verification email step for {user.email}")
+        
+        # Request verification token from identity service (signature: email only)
+        token = await self.identity_service.request_email_verification(user.email)
+        logger.info(f"[Signup Flow] Got verification token: {token[:20]}...")
         context.mark_verification_sent(token)
         
         # Send verification email
@@ -149,6 +153,7 @@ class SignupFlow:
             "frontend_url",
             self.config.get("frontend", {}).get("verify_email_url", ""),
         )
+        logger.info(f"[Signup Flow] Frontend URL: {frontend_url}")
         
         verify_cmd = VerificationEmailCommand(
             recipient_email=user.email,
@@ -156,17 +161,26 @@ class SignupFlow:
             verification_url=f"{frontend_url}?token={token}",
             language="en",
             sender_key=self.config["templates"]["email_verification"].get("sender_key"),
+            template_key=self.config["templates"]["email_verification"].get("template_key", "email_verification"),
         )
+        logger.info(f"[Signup Flow] Verification command: sender_key={verify_cmd.sender_key}, template_key={verify_cmd.template_key}")
         
-        log = await self.notification_service.send_from_dto(
-            verify_cmd.to_send_notification_command()
-        )
-        
-        if log.status.value != "SENT":
-            logger.warning(f"[Signup Flow] Verification email send failed: {log.error_message}")
-            context.errors["verification_email_failed"] = log.error_message
-        else:
-            logger.info(f"[Signup Flow] Verification email sent to {user.email}")
+        try:
+            logger.info(f"[Signup Flow] Calling notification service to send verification email...")
+            log = await sync_to_async(self.notification_service.send_from_dto)(
+                verify_cmd.to_send_notification_command()
+            )
+            logger.info(f"[Signup Flow] Notification log: {log}, status={log.status if hasattr(log, 'status') else 'N/A'}")
+            
+            if log.status.value != "SENT":
+                logger.warning(f"[Signup Flow] Verification email send failed: {log.error_message}")
+                context.errors["verification_email_failed"] = log.error_message
+            else:
+                logger.info(f"[Signup Flow] Verification email sent to {user.email}")
+        except Exception as exc:
+            # Do not fail signup if email cannot be sent; record error and continue
+            logger.error(f"[Signup Flow] Verification email send exception: {exc}", exc_info=True)
+            context.errors["verification_email_failed"] = str(exc)
     
     async def _auto_create_tenant_step(self, user, context: SignupContext):
         """
@@ -194,7 +208,7 @@ class SignupFlow:
     
     def _is_email_verification_enabled(self) -> bool:
         """Check if email verification is enabled in signup flow."""
-        return (
+        enabled = (
             self.config
             .get("flows", {})
             .get("signup", {})
@@ -202,6 +216,10 @@ class SignupFlow:
             .get("email_verification", {})
             .get("enabled", True)
         )
+        logger.debug(f"[Signup Flow] Email verification enabled: {enabled}")
+        logger.debug(f"[Signup Flow] Config path: flows.signup.features.email_verification.enabled")
+        logger.debug(f"[Signup Flow] Full config: {self.config}")
+        return enabled
     
     def _is_auto_create_tenant_enabled(self) -> bool:
         """Check if auto-create tenant is enabled."""

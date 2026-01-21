@@ -12,16 +12,24 @@ frontend:
 # Key name == template_key in notification module
 templates:
   email_verification:
+    template_key: email_verification
     sender_key: trapmail_verify
+    language: en
   
   password_reset:
+    template_key: password_reset
     sender_key: trapmail_verify
+    language: en
   
   password_reset_confirmation:
+    template_key: password_reset_confirmation
     sender_key: trapmail_verify
+    language: en
   
   welcome_email:
+    template_key: welcome_email
     sender_key: trapmail_verify
+    language: en
 
 # SIGNUP FLOW
 flows:

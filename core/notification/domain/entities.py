@@ -16,14 +16,16 @@ class NotificationSender:
     """
     
     id: UUID
+    sender_key: str  # unique key for lookup (e.g., trapmail_verify)
     provider: str  # smtp, sendgrid, twilio, etc.
     channel: Channel
     from_email: Optional[str] = None  # For EMAIL channel
     from_name: Optional[str] = None
-    credentials: Dict[str, Any] = None  # Encrypted in DB
+    credentials: Optional[Dict[str, Any]] = None  # Encrypted in DB
     is_active: bool = True
-    created_at: datetime = None
-    updated_at: datetime = None
+    is_default: bool = False
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     
     def is_ready(self) -> bool:
         """Check if sender is configured and active."""
@@ -46,8 +48,8 @@ class NotificationTemplate:
     subject: str  # For EMAIL: email subject
     body: str  # Jinja2 template with {{placeholders}}
     is_active: bool = True
-    created_at: datetime = None
-    updated_at: datetime = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     
     def render(self, context: Dict[str, Any]) -> tuple[str, str]:
         """
@@ -86,10 +88,12 @@ class NotificationLog:
     channel: Channel
     recipient: str
     status: SendStatus
+    context: Optional[Dict[str, Any]] = None
+    sender_key: Optional[str] = None
     error_message: Optional[str] = None
     external_id: Optional[str] = None  # Provider's message ID
     sent_at: Optional[datetime] = None
-    created_at: datetime = None
+    created_at: Optional[datetime] = None
     
     def is_successful(self) -> bool:
         return self.status == SendStatus.SENT
